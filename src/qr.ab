@@ -1,0 +1,297 @@
+// ATCUD (Portaria 195/2020, articles 3 and 4) and the QR code (its article 5, and AT's
+// "Especificações Técnicas - Código QR", version 1.1 of October 2020).
+import github("AndreBaltazar8/abla-qr")
+import "abla/text"
+import "decimal.ab"
+import "model.ab"
+import "sign.ab"
+import "totals.ab"
+
+// --- ATCUD ---------------------------------------------------------------------------
+
+// The digits after the slash, with their leading zeros, as AT's own example has
+// (G:FT AB2019/0035, H:CSDF7T5H-0035). "" if there are none.
+fun saftSequenceNumber(documentNumber: string): string {
+    val slash = documentNumber.lastIndexOf("/")
+    if (slash < 0 || slash + 1 >= documentNumber.size) return ""
+    val tail = documentNumber.slice(slash + 1, documentNumber.size)
+    for (c in tail) if (c < 48 || c > 57) return ""
+    tail
+}
+
+// The value of the ATCUD field: the series' validation code from AT, a hyphen and the
+// sequence number. "" if the code has under 8 characters or holds a separator, or the
+// result passes the QR field's 70.
+fun saftAtcud(validationCode: string, documentNumber: string): string {
+    if (validationCode.codePointCount() < 8) return ""
+    if (validationCode.contains(" ") || validationCode.contains("*") || validationCode.contains("-")) return ""
+    val sequence = saftSequenceNumber(documentNumber)
+    if (sequence == "") return ""
+    val out = validationCode + "-" + sequence
+    if (out.codePointCount() > 70) return ""
+    out
+}
+
+// The form printed on the document, immediately above the QR code (article 4).
+fun saftAtcudPrinted(atcud: string): string = "ATCUD:" + atcud
+
+// --- The message ---------------------------------------------------------------------
+
+// One tax region's fields: I, J or K. Null fields aren't written.
+class SaftQrRegion(
+    val region: string,
+    val exemptBase: SaftDecimal? = null,
+    val reducedBase: SaftDecimal? = null,
+    val reducedVat: SaftDecimal? = null,
+    val intermediateBase: SaftDecimal? = null,
+    val intermediateVat: SaftDecimal? = null,
+    val standardBase: SaftDecimal? = null,
+    val standardVat: SaftDecimal? = null
+)
+
+class SaftQrData(
+    val issuerTaxId: string,
+    val customerTaxId: string,
+    val customerCountry: string,
+    val documentType: string,
+    val documentStatus: string,
+    // YYYY-MM-DD, written without hyphens.
+    val documentDate: string,
+    val documentNumber: string,
+    val atcud: string,
+    val totalTaxes: SaftDecimal,
+    val grossTotal: SaftDecimal,
+    val hashCharacters: string,
+    val certificateNumber: int,
+    // Empty writes I1:0, for a document with no VAT rate shown (rule h).
+    val regions: array<SaftQrRegion> = array<SaftQrRegion>(),
+    val notSubject: SaftDecimal? = null,
+    val stampDuty: SaftDecimal? = null,
+    val withholding: SaftDecimal? = null,
+    val otherInformation: string = ""
+)
+
+class SaftQrResult(val ok: bool, val message: string, val error: string)
+
+private class QrBuilder(var parts: array<string>, var error: string) {
+    fun field(code: string, value: string, limit: int): void {
+        if (value.codePointCount() > limit) error = "$code has ${value.codePointCount()} characters, the limit is $limit"
+        if (value.contains("*")) error = "$code can't contain an asterisk"
+        parts.append(code + ":" + value)
+        return
+    }
+
+    fun money(code: string, value: SaftDecimal?): void {
+        if (value != null) {
+            if (value.isNegative()) error = "$code is negative"
+            field(code, value.money(), 16)
+        }
+        return
+    }
+
+    fun region(letter: string, r: SaftQrRegion): void {
+        field(letter + "1", r.region, 5)
+        money(letter + "2", r.exemptBase)
+        money(letter + "3", r.reducedBase)
+        money(letter + "4", r.reducedVat)
+        money(letter + "5", r.intermediateBase)
+        money(letter + "6", r.intermediateVat)
+        money(letter + "7", r.standardBase)
+        money(letter + "8", r.standardVat)
+        return
+    }
+}
+
+// The message: fields in the table's order, joined by "*", amounts with two decimals
+// and a dot. Sections 3 and 4 of the specification.
+fun saftQrMessage(data: SaftQrData): SaftQrResult {
+    if (data.regions.size > 3) return SaftQrResult(false, "", "at most three tax regions fit")
+    val b = QrBuilder(array<string>(), "")
+    b.field("A", data.issuerTaxId, 9)
+    b.field("B", data.customerTaxId, 30)
+    b.field("C", data.customerCountry, 12)
+    b.field("D", data.documentType, 2)
+    b.field("E", data.documentStatus, 1)
+    b.field("F", data.documentDate.replace("-", ""), 8)
+    b.field("G", data.documentNumber, 60)
+    b.field("H", data.atcud, 70)
+    if (data.regions.size == 0) b.field("I1", "0", 5)
+    val letters = ["I", "J", "K"]
+    for (i in 0 until data.regions.size) b.region(letters[i], data.regions[i])
+    b.money("L", data.notSubject)
+    b.money("M", data.stampDuty)
+    b.field("N", data.totalTaxes.money(), 16)
+    b.field("O", data.grossTotal.money(), 16)
+    b.money("P", data.withholding)
+    b.field("Q", data.hashCharacters, 4)
+    if (data.certificateNumber < 0) return SaftQrResult(false, "", "the certificate number is negative")
+    b.field("R", "${data.certificateNumber}", 4)
+    if (data.otherInformation != "") b.field("S", data.otherInformation, 65)
+    if (b.error != "") return SaftQrResult(false, "", b.error)
+    SaftQrResult(true, textJoin(b.parts, "*"), "")
+}
+
+// --- From documents ------------------------------------------------------------------
+
+private class RegionSums(
+    val region: string,
+    var exempt: SaftDecimal? = null,
+    var reducedBase: SaftDecimal? = null,
+    var reducedVat: SaftDecimal? = null,
+    var intermediateBase: SaftDecimal? = null,
+    var intermediateVat: SaftDecimal? = null,
+    var standardBase: SaftDecimal? = null,
+    var standardVat: SaftDecimal? = null
+)
+
+private fun adding(sum: SaftDecimal?, value: SaftDecimal): SaftDecimal {
+    if (sum != null) return sum.plus(value)
+    value
+}
+
+private fun positive(value: SaftDecimal?): SaftDecimal? {
+    if (value != null) return value.abs()
+    null
+}
+
+private class QrTotals(val regions: array<SaftQrRegion>, val notSubject: SaftDecimal?, val stampDuty: SaftDecimal?, val error: string)
+
+// Sums a document's lines the way rule k asks: per rate, per region. VAT comes from the
+// sum at each rate, the rounding saftComputeTotals uses. Lines with no Tax, and NS and
+// OUT, go to L (table, code L); stamp duty's bases count as exempt (code I2) and its tax
+// goes to M. National regions come first, as in AT's first example, then the rest.
+private fun qrTotals(lines: array<SaftLine>): QrTotals {
+    val sums: array<RegionSums> = []
+    var notSubject: SaftDecimal? = null
+    var stamp: SaftDecimal? = null
+    for (line in lines) {
+        val tax = line.tax
+        var base = saftLineBase(line)
+        val unitBase = line.taxBase
+        if (unitBase != null) {
+            val whole = unitBase.times(line.quantity)
+            base = if (line.debitAmount != null) whole.negated() else whole
+        }
+        if (tax == null || tax.taxCode == "NS" || tax.taxCode == "OUT" || tax.taxType == "NS") {
+            notSubject = adding(notSubject, base)
+        } else {
+            var known = false
+            for (candidate in sums) if (candidate.region == tax.taxCountryRegion) known = true
+            if (!known) sums.append(RegionSums(tax.taxCountryRegion))
+            val rate = tax.percentage
+            val vat = if (rate != null) base.times(rate).dividedBy(dec("100"), 6) else saftDecimalZero()
+            if (tax.taxType == "IS") {
+                val unit = tax.amount
+                if (unit != null) {
+                    val amount = unit.times(line.quantity)
+                    stamp = adding(stamp, if (line.debitAmount != null) amount.negated() else amount)
+                } else stamp = adding(stamp, vat)
+            }
+            for (found in sums) {
+                if (found.region == tax.taxCountryRegion) {
+                    if (tax.taxType == "IS") found.exempt = adding(found.exempt, base)
+                    else if (tax.taxCode == "RED") {
+                        found.reducedBase = adding(found.reducedBase, base)
+                        found.reducedVat = adding(found.reducedVat, vat)
+                    } else if (tax.taxCode == "INT") {
+                        found.intermediateBase = adding(found.intermediateBase, base)
+                        found.intermediateVat = adding(found.intermediateVat, vat)
+                    } else if (tax.taxCode == "NOR") {
+                        found.standardBase = adding(found.standardBase, base)
+                        found.standardVat = adding(found.standardVat, vat)
+                    } else found.exempt = adding(found.exempt, base)
+                }
+            }
+        }
+    }
+    val regions: array<SaftQrRegion> = []
+    val order: array<RegionSums> = []
+    for (name in ["PT", "PT-AC", "PT-MA"]) for (s in sums) if (s.region == name) order.append(s)
+    for (s in sums) if (s.region != "PT" && s.region != "PT-AC" && s.region != "PT-MA") order.append(s)
+    for (s in order)
+        regions.append(SaftQrRegion(s.region, positive(s.exempt), positive(s.reducedBase), positive(s.reducedVat), positive(s.intermediateBase), positive(s.intermediateVat), positive(s.standardBase), positive(s.standardVat)))
+    QrTotals(regions, positive(notSubject), positive(stamp), if (regions.size > 3) "the document has more than three tax regions" else "")
+}
+
+private fun findCustomer(file: SaftFile, id: string): SaftCustomer? {
+    for (c in file.masterFiles.customers) if (c.customerId == id) return c
+    null
+}
+
+private fun withheld(items: array<SaftWithholding>): SaftDecimal? {
+    var sum: SaftDecimal? = null
+    for (item in items) sum = adding(sum, item.amount)
+    sum
+}
+
+private fun qrFromLines(file: SaftFile, customerId: string, type: string, status: string, date: string, number: string, atcud: string, lines: array<SaftLine>, totals: SaftDocumentTotals, hash: string, withholding: SaftDecimal?, other: string): SaftQrResult {
+    val customer = findCustomer(file, customerId)
+    if (customer == null) return SaftQrResult(false, "", "customer \"$customerId\" isn't in the file")
+    val sums = qrTotals(lines)
+    if (sums.error != "") return SaftQrResult(false, "", sums.error)
+    val characters = saftPrintedCharacters(hash)
+    saftQrMessage(SaftQrData(file.header.taxRegistrationNumber, customer.customerTaxId, customer.billingAddress.country, type, status, date, number, atcud, totals.taxPayable, totals.grossTotal, if (characters == "") hash else characters, file.header.softwareCertificateNumber, sums.regions, sums.notSubject, sums.stampDuty, withholding, other))
+}
+
+// A signed invoice's message. Margin-scheme VAT that the document may not show (the
+// note to AT's Example 7) has to go through saftQrMessage, which takes what is printed.
+fun saftQrForInvoice(file: SaftFile, d: SaftInvoice, otherInformation: string = ""): SaftQrResult =
+    qrFromLines(file, d.customerId, d.invoiceType, d.status.status, d.invoiceDate, d.invoiceNo, d.atcud, d.lines, d.totals, d.hash, withheld(d.withholding), otherInformation)
+
+fun saftQrForWorkDocument(file: SaftFile, d: SaftWorkDocument, otherInformation: string = ""): SaftQrResult =
+    qrFromLines(file, d.customerId, d.workType, d.status.status, d.workDate, d.documentNumber, d.atcud, d.lines, d.totals, d.hash, null, otherInformation)
+
+// A transport document. AT's Example 4: when the printed document doesn't show values,
+// the message can't either, so `valued` false writes I1:0, N:0.00 and O:0.00. A
+// document for a supplier (GD and the like) names it through `customerTaxId`.
+fun saftQrForMovement(file: SaftFile, d: SaftStockMovement, valued: bool = false, otherInformation: string = ""): SaftQrResult {
+    var taxId = ""
+    var country = ""
+    val customer = findCustomer(file, d.customerId)
+    if (customer != null) {
+        taxId = customer.customerTaxId
+        country = customer.billingAddress.country
+    }
+    for (s in file.masterFiles.suppliers) {
+        if (s.supplierId == d.supplierId && d.supplierId != "") {
+            taxId = s.supplierTaxId
+            country = s.billingAddress.country
+        }
+    }
+    if (taxId == "") return SaftQrResult(false, "", "the document's customer or supplier isn't in the file")
+    val characters = saftPrintedCharacters(d.hash)
+    val hash = if (characters == "") d.hash else characters
+    val h = file.header
+    if (!valued)
+        return saftQrMessage(SaftQrData(h.taxRegistrationNumber, taxId, country, d.movementType, d.status.status, d.movementDate, d.documentNumber, d.atcud, saftDecimalZero(), saftDecimalZero(), hash, h.softwareCertificateNumber, otherInformation = otherInformation))
+    val sums = qrTotals(d.lines)
+    if (sums.error != "") return SaftQrResult(false, "", sums.error)
+    saftQrMessage(SaftQrData(h.taxRegistrationNumber, taxId, country, d.movementType, d.status.status, d.movementDate, d.documentNumber, d.atcud, d.totals.taxPayable, d.totals.grossTotal, hash, h.softwareCertificateNumber, sums.regions, sums.notSubject, sums.stampDuty, null, otherInformation))
+}
+
+// A receipt. Receipts aren't signed, yet the table marks Q mandatory, and neither the
+// Portaria nor the specification says what goes there: this writes Q:0, which is
+// unconfirmed (SOURCES.md). Taxes aren't discriminated by default: the whole base
+// goes to L, as the table's note on receipts without tax discrimination says.
+fun saftQrForPayment(file: SaftFile, d: SaftPayment, otherInformation: string = ""): SaftQrResult {
+    val customer = findCustomer(file, d.customerId)
+    if (customer == null) return SaftQrResult(false, "", "customer \"${d.customerId}\" isn't in the file")
+    val h = file.header
+    saftQrMessage(SaftQrData(h.taxRegistrationNumber, customer.customerTaxId, customer.billingAddress.country, d.paymentType, d.status.status, d.transactionDate, d.paymentRefNo, d.atcud, d.totals.taxPayable, d.totals.grossTotal, "0", h.softwareCertificateNumber, notSubject = d.totals.netTotal, withholding = withheld(d.withholding), otherInformation = otherInformation))
+}
+
+// --- The image -----------------------------------------------------------------------
+
+class SaftQrImage(val ok: bool, val error: string, val version: int, val png: string, val svg: string)
+
+// Section 2 of the specification: level M, byte mode, version 9 or more, 2 points per
+// module and a margin of 2 modules. Printed, the image must measure at least 30 x 30 mm
+// and keep 0.25 cm of margin, which is the document's layout to ensure. The margin is
+// narrower than the quiet zone of 4 modules ISO/IEC 18004 asks for: AT's figures use 2.
+fun saftQrImage(message: string, scale: int = 2, border: int = 2): SaftQrImage {
+    val result = qrEncodeBytes(message, QrOptions(errorCorrection = qrEcMedium, minVersion = 9))
+    val matrix = result.matrix
+    if (matrix == null) return SaftQrImage(false, result.error, 0, "", "")
+    val render = QrRenderOptions(scale = scale, border = border)
+    SaftQrImage(true, "", matrix.version, qrPng(matrix, render), qrSvg(matrix, render))
+}
