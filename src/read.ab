@@ -1,0 +1,372 @@
+// Reads a file through abla-xml back into the model. Anything the model can't hold is
+// an issue, never silently dropped; accounting tables are named in skippedTables.
+// The reader reports what it read: run saftCheck and saftVerifyChains on the result.
+import github("AndreBaltazar8/abla-xml")
+import "abla/text"
+import "check.ab"
+import "decimal.ab"
+import "model.ab"
+
+class SaftReadResult(val file: SaftFile?, val issues: array<SaftIssue>, val error: string) {
+    fun succeeded(): bool = error == ""
+}
+
+private class Reader(val issues: array<SaftIssue>) {
+    fun problem(el: XmlElement, code: string, message: string): void {
+        issues.append(SaftIssue(saftSeverityError, code, "line ${el.line}: ${el.localName}", message))
+        return
+    }
+
+    // Flags children that aren't in `names`, so a misspelt field can't vanish.
+    fun known(el: XmlElement, names: string): void {
+        val allowed = " " + names + " "
+        for (child in el.elements())
+            if (!allowed.contains(" " + child.localName + " ")) problem(child, "unknown_element", "not expected inside ${el.localName}")
+        return
+    }
+
+    fun required(el: XmlElement, name: string): string {
+        if (el.child(name) == null) problem(el, "required", "$name is missing")
+        el.childText(name)
+    }
+
+    fun optional(el: XmlElement, name: string): string = el.childText(name)
+
+    fun amount(el: XmlElement, name: string): SaftDecimal {
+        val child = el.child(name)
+        if (child == null) {
+            problem(el, "required", "$name is missing")
+            return saftDecimalZero()
+        }
+        val value = saftDecimalParse(child.text())
+        if (value != null) return value
+        problem(child, "bad_decimal", "\"${child.text()}\" isn't a decimal")
+        saftDecimalZero()
+    }
+
+    fun optAmount(el: XmlElement, name: string): SaftDecimal? {
+        if (el.child(name) == null) return null
+        amount(el, name)
+    }
+
+    fun integer(el: XmlElement, name: string, fallback: int, needed: bool): int {
+        val child = el.child(name)
+        if (child == null) {
+            if (needed) problem(el, "required", "$name is missing")
+            return fallback
+        }
+        val text = child.text()
+        if (text == "" || text.size > 18) {
+            problem(child, "bad_integer", "\"$text\" isn't an integer")
+            return fallback
+        }
+        var out = 0
+        for (c in text) {
+            if (c < 48 || c > 57) {
+                problem(child, "bad_integer", "\"$text\" isn't an integer")
+                return fallback
+            }
+            out = out * 10 + (c - 48)
+        }
+        out
+    }
+
+    fun texts(el: XmlElement, name: string): array<string> {
+        val out: array<string> = []
+        for (child in el.elements(name)) out.append(child.text())
+        out
+    }
+
+    fun address(el: XmlElement): SaftAddress {
+        known(el, "BuildingNumber StreetName AddressDetail City PostalCode Region Country")
+        SaftAddress(required(el, "AddressDetail"), required(el, "City"), required(el, "PostalCode"), required(el, "Country"),
+            optional(el, "BuildingNumber"), optional(el, "StreetName"), optional(el, "Region"))
+    }
+
+    fun addressIn(el: XmlElement, name: string): SaftAddress {
+        val child = el.child(name)
+        if (child != null) return address(child)
+        problem(el, "required", "$name is missing")
+        SaftAddress("", "", "", "")
+    }
+
+    fun addresses(el: XmlElement, name: string): array<SaftAddress> {
+        val out: array<SaftAddress> = []
+        for (child in el.elements(name)) out.append(address(child))
+        out
+    }
+
+    fun header(el: XmlElement): SaftHeader {
+        known(el, "AuditFileVersion CompanyID TaxRegistrationNumber TaxAccountingBasis CompanyName BusinessName CompanyAddress FiscalYear StartDate EndDate CurrencyCode DateCreated TaxEntity ProductCompanyTaxID SoftwareCertificateNumber ProductID ProductVersion HeaderComment Telephone Fax Email Website")
+        SaftHeader(required(el, "CompanyID"), required(el, "TaxRegistrationNumber"), required(el, "CompanyName"),
+            addressIn(el, "CompanyAddress"), integer(el, "FiscalYear", 0, true), required(el, "StartDate"), required(el, "EndDate"),
+            required(el, "DateCreated"), required(el, "ProductCompanyTaxID"), required(el, "ProductID"), required(el, "ProductVersion"),
+            required(el, "TaxAccountingBasis"), optional(el, "BusinessName"), required(el, "CurrencyCode"), required(el, "TaxEntity"),
+            integer(el, "SoftwareCertificateNumber", 0, true), optional(el, "HeaderComment"), optional(el, "Telephone"),
+            optional(el, "Fax"), optional(el, "Email"), optional(el, "Website"))
+    }
+
+    fun masterFiles(el: XmlElement): SaftMasterFiles {
+        val customers: array<SaftCustomer> = []
+        for (c in el.elements("Customer")) {
+            known(c, "CustomerID AccountID CustomerTaxID CompanyName Contact BillingAddress ShipToAddress Telephone Fax Email Website SelfBillingIndicator")
+            customers.append(SaftCustomer(required(c, "CustomerID"), required(c, "CustomerTaxID"), required(c, "CompanyName"), addressIn(c, "BillingAddress"),
+                required(c, "AccountID"), optional(c, "Contact"), addresses(c, "ShipToAddress"), optional(c, "Telephone"), optional(c, "Fax"),
+                optional(c, "Email"), optional(c, "Website"), integer(c, "SelfBillingIndicator", 0, true)))
+        }
+        val suppliers: array<SaftSupplier> = []
+        for (s in el.elements("Supplier")) {
+            known(s, "SupplierID AccountID SupplierTaxID CompanyName Contact BillingAddress ShipFromAddress Telephone Fax Email Website SelfBillingIndicator")
+            suppliers.append(SaftSupplier(required(s, "SupplierID"), required(s, "SupplierTaxID"), required(s, "CompanyName"), addressIn(s, "BillingAddress"),
+                required(s, "AccountID"), optional(s, "Contact"), addresses(s, "ShipFromAddress"), optional(s, "Telephone"), optional(s, "Fax"),
+                optional(s, "Email"), optional(s, "Website"), integer(s, "SelfBillingIndicator", 0, true)))
+        }
+        val products: array<SaftProduct> = []
+        for (p in el.elements("Product")) {
+            known(p, "ProductType ProductCode ProductGroup ProductDescription ProductNumberCode CustomsDetails")
+            val customs = p.child("CustomsDetails")
+            products.append(SaftProduct(required(p, "ProductType"), required(p, "ProductCode"), required(p, "ProductDescription"), required(p, "ProductNumberCode"),
+                optional(p, "ProductGroup"), if (customs != null) texts(customs, "CNCode") else array<string>(), if (customs != null) texts(customs, "UNNumber") else array<string>()))
+        }
+        val entries: array<SaftTaxEntry> = []
+        val table = el.child("TaxTable")
+        if (table != null) {
+            for (t in table.elements("TaxTableEntry")) {
+                known(t, "TaxType TaxCountryRegion TaxCode Description TaxExpirationDate TaxPercentage TaxAmount")
+                entries.append(SaftTaxEntry(required(t, "TaxType"), required(t, "TaxCountryRegion"), required(t, "TaxCode"), required(t, "Description"),
+                    optAmount(t, "TaxPercentage"), optAmount(t, "TaxAmount"), optional(t, "TaxExpirationDate")))
+            }
+        }
+        SaftMasterFiles(customers, suppliers, products, entries)
+    }
+
+    fun status(el: XmlElement, prefix: string, sourceName: string): SaftDocumentStatus {
+        val s = el.child("DocumentStatus")
+        if (s == null) {
+            problem(el, "required", "DocumentStatus is missing")
+            return SaftDocumentStatus("", "", "")
+        }
+        known(s, prefix + "Status " + prefix + "StatusDate Reason SourceID " + sourceName)
+        SaftDocumentStatus(required(s, prefix + "Status"), required(s, prefix + "StatusDate"), required(s, "SourceID"), required(s, sourceName), optional(s, "Reason"))
+    }
+
+    fun shipping(el: XmlElement, name: string): SaftShippingPoint? {
+        val s = el.child(name)
+        if (s == null) return null
+        known(s, "DeliveryID DeliveryDate WarehouseID LocationID Address")
+        // Warehouse and location alternate in the sequence: a location belongs to the
+        // warehouse just before it, and each can stand alone.
+        val places: array<SaftWarehouse> = []
+        var pending = ""
+        var holding = false
+        for (child in s.elements()) {
+            if (child.localName == "WarehouseID") {
+                if (holding) places.append(SaftWarehouse(pending, ""))
+                pending = child.text()
+                holding = true
+            } else if (child.localName == "LocationID") {
+                places.append(SaftWarehouse(if (holding) pending else "", child.text()))
+                holding = false
+                pending = ""
+            }
+        }
+        if (holding) places.append(SaftWarehouse(pending, ""))
+        val a = s.child("Address")
+        val point = SaftShippingPoint(texts(s, "DeliveryID"), optional(s, "DeliveryDate"), places, if (a != null) address(a) else null)
+        point
+    }
+
+    fun tax(el: XmlElement): SaftTax? {
+        val t = el.child("Tax")
+        if (t == null) return null
+        known(t, "TaxType TaxCountryRegion TaxCode TaxPercentage TaxAmount")
+        SaftTax(required(t, "TaxType"), required(t, "TaxCountryRegion"), required(t, "TaxCode"), optAmount(t, "TaxPercentage"), optAmount(t, "TaxAmount"))
+    }
+
+    fun line(el: XmlElement): SaftLine {
+        known(el, "LineNumber OrderReferences ProductCode ProductDescription Quantity UnitOfMeasure UnitPrice TaxBase TaxPointDate References Description ProductSerialNumber DebitAmount CreditAmount Tax TaxExemptionReason TaxExemptionCode SettlementAmount CustomsInformation")
+        val orders: array<SaftOrderReference> = []
+        for (o in el.elements("OrderReferences")) orders.append(SaftOrderReference(optional(o, "OriginatingON"), optional(o, "OrderDate")))
+        val references: array<SaftLineReference> = []
+        for (r in el.elements("References")) references.append(SaftLineReference(optional(r, "Reference"), optional(r, "Reason")))
+        val serial = el.child("ProductSerialNumber")
+        val customs = el.child("CustomsInformation")
+        SaftLine(integer(el, "LineNumber", 0, true), required(el, "ProductCode"), required(el, "ProductDescription"), amount(el, "Quantity"),
+            required(el, "UnitOfMeasure"), amount(el, "UnitPrice"), required(el, "Description"), optAmount(el, "DebitAmount"), optAmount(el, "CreditAmount"),
+            tax(el), optional(el, "TaxPointDate"), optional(el, "TaxExemptionReason"), optional(el, "TaxExemptionCode"), optAmount(el, "SettlementAmount"),
+            optAmount(el, "TaxBase"), orders, references, if (serial != null) texts(serial, "SerialNumber") else array<string>(),
+            if (customs != null) texts(customs, "ARCNo") else array<string>(), if (customs != null) optAmount(customs, "IECAmount") else null)
+    }
+
+    fun lines(el: XmlElement): array<SaftLine> {
+        val out: array<SaftLine> = []
+        for (l in el.elements("Line")) out.append(line(l))
+        out
+    }
+
+    fun method(el: XmlElement): SaftPaymentMethod =
+        SaftPaymentMethod(amount(el, "PaymentAmount"), required(el, "PaymentDate"), optional(el, "PaymentMechanism"))
+
+    fun totals(el: XmlElement): SaftDocumentTotals {
+        val t = el.child("DocumentTotals")
+        if (t == null) {
+            problem(el, "required", "DocumentTotals is missing")
+            return SaftDocumentTotals(saftDecimalZero(), saftDecimalZero(), saftDecimalZero())
+        }
+        known(t, "TaxPayable NetTotal GrossTotal Currency Settlement Payment")
+        var currency: SaftCurrency? = null
+        val c = t.child("Currency")
+        if (c != null) currency = SaftCurrency(required(c, "CurrencyCode"), amount(c, "CurrencyAmount"), amount(c, "ExchangeRate"))
+        val settlements: array<SaftSettlement> = []
+        for (s in t.elements("Settlement"))
+            settlements.append(SaftSettlement(optional(s, "SettlementDiscount"), optAmount(s, "SettlementAmount"), optional(s, "SettlementDate"), optional(s, "PaymentTerms")))
+        val payments: array<SaftPaymentMethod> = []
+        for (p in t.elements("Payment")) payments.append(method(p))
+        SaftDocumentTotals(amount(t, "TaxPayable"), amount(t, "NetTotal"), amount(t, "GrossTotal"), currency, settlements, payments)
+    }
+
+    fun withholding(el: XmlElement): array<SaftWithholding> {
+        val out: array<SaftWithholding> = []
+        for (w in el.elements("WithholdingTax"))
+            out.append(SaftWithholding(amount(w, "WithholdingTaxAmount"), optional(w, "WithholdingTaxType"), optional(w, "WithholdingTaxDescription")))
+        out
+    }
+
+    fun invoices(el: XmlElement): SaftSalesInvoices {
+        known(el, "NumberOfEntries TotalDebit TotalCredit Invoice")
+        val out: array<SaftInvoice> = []
+        for (d in el.elements("Invoice")) {
+            known(d, "InvoiceNo ATCUD DocumentStatus Hash HashControl Period InvoiceDate InvoiceType SpecialRegimes SourceID EACCode SystemEntryDate TransactionID CustomerID ShipTo ShipFrom MovementEndTime MovementStartTime Line DocumentTotals WithholdingTax")
+            var self = 0
+            var cash = 0
+            var third = 0
+            val regimes = d.child("SpecialRegimes")
+            if (regimes == null) problem(d, "required", "SpecialRegimes is missing")
+            else {
+                self = integer(regimes, "SelfBillingIndicator", 0, true)
+                cash = integer(regimes, "CashVATSchemeIndicator", 0, true)
+                third = integer(regimes, "ThirdPartiesBillingIndicator", 0, true)
+            }
+            out.append(SaftInvoice(required(d, "InvoiceNo"), required(d, "ATCUD"), status(d, "Invoice", "SourceBilling"), required(d, "InvoiceDate"), required(d, "InvoiceType"),
+                required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "CustomerID"), lines(d), totals(d), required(d, "Hash"), required(d, "HashControl"),
+                integer(d, "Period", 0, false), self, cash, third, optional(d, "EACCode"), optional(d, "TransactionID"), shipping(d, "ShipTo"), shipping(d, "ShipFrom"),
+                optional(d, "MovementEndTime"), optional(d, "MovementStartTime"), withholding(d)))
+        }
+        SaftSalesInvoices(integer(el, "NumberOfEntries", 0, true), amount(el, "TotalDebit"), amount(el, "TotalCredit"), out)
+    }
+
+    fun movements(el: XmlElement): SaftMovementOfGoods {
+        known(el, "NumberOfMovementLines TotalQuantityIssued StockMovement")
+        val out: array<SaftStockMovement> = []
+        for (d in el.elements("StockMovement")) {
+            known(d, "DocumentNumber ATCUD DocumentStatus Hash HashControl Period MovementDate MovementType SystemEntryDate TransactionID CustomerID SupplierID SourceID EACCode MovementComments ShipTo ShipFrom MovementEndTime MovementStartTime ATDocCodeID Line DocumentTotals")
+            out.append(SaftStockMovement(required(d, "DocumentNumber"), required(d, "ATCUD"), status(d, "Movement", "SourceBilling"), required(d, "MovementDate"), required(d, "MovementType"),
+                required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "MovementStartTime"), lines(d), totals(d), optional(d, "CustomerID"), optional(d, "SupplierID"),
+                required(d, "Hash"), required(d, "HashControl"), integer(d, "Period", 0, false), optional(d, "TransactionID"), optional(d, "EACCode"), optional(d, "MovementComments"),
+                shipping(d, "ShipTo"), shipping(d, "ShipFrom"), optional(d, "MovementEndTime"), optional(d, "ATDocCodeID")))
+        }
+        SaftMovementOfGoods(integer(el, "NumberOfMovementLines", 0, true), amount(el, "TotalQuantityIssued"), out)
+    }
+
+    fun workDocuments(el: XmlElement): SaftWorkingDocuments {
+        known(el, "NumberOfEntries TotalDebit TotalCredit WorkDocument")
+        val out: array<SaftWorkDocument> = []
+        for (d in el.elements("WorkDocument")) {
+            known(d, "DocumentNumber ATCUD DocumentStatus Hash HashControl Period WorkDate WorkType SourceID EACCode SystemEntryDate TransactionID CustomerID Line DocumentTotals")
+            out.append(SaftWorkDocument(required(d, "DocumentNumber"), required(d, "ATCUD"), status(d, "Work", "SourceBilling"), required(d, "WorkDate"), required(d, "WorkType"),
+                required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "CustomerID"), lines(d), totals(d), required(d, "Hash"), required(d, "HashControl"),
+                integer(d, "Period", 0, false), optional(d, "EACCode"), optional(d, "TransactionID")))
+        }
+        SaftWorkingDocuments(integer(el, "NumberOfEntries", 0, true), amount(el, "TotalDebit"), amount(el, "TotalCredit"), out)
+    }
+
+    fun paymentLine(el: XmlElement): SaftPaymentLine {
+        known(el, "LineNumber SourceDocumentID SettlementAmount DebitAmount CreditAmount Tax TaxExemptionReason TaxExemptionCode")
+        val sources: array<SaftSourceDocument> = []
+        for (s in el.elements("SourceDocumentID")) sources.append(SaftSourceDocument(required(s, "OriginatingON"), required(s, "InvoiceDate"), optional(s, "Description")))
+        SaftPaymentLine(integer(el, "LineNumber", 0, true), sources, optAmount(el, "DebitAmount"), optAmount(el, "CreditAmount"), optAmount(el, "SettlementAmount"), tax(el),
+            optional(el, "TaxExemptionReason"), optional(el, "TaxExemptionCode"))
+    }
+
+    fun receipts(el: XmlElement): SaftPayments {
+        known(el, "NumberOfEntries TotalDebit TotalCredit Payment")
+        val out: array<SaftPayment> = []
+        for (d in el.elements("Payment")) {
+            known(d, "PaymentRefNo ATCUD Period TransactionID TransactionDate PaymentType Description SystemID DocumentStatus PaymentMethod SourceID SystemEntryDate CustomerID Line DocumentTotals WithholdingTax")
+            val paymentLines: array<SaftPaymentLine> = []
+            for (l in d.elements("Line")) paymentLines.append(paymentLine(l))
+            val methods: array<SaftPaymentMethod> = []
+            for (m in d.elements("PaymentMethod")) methods.append(method(m))
+            var taxPayable = saftDecimalZero()
+            var net = saftDecimalZero()
+            var gross = saftDecimalZero()
+            var currency: SaftCurrency? = null
+            var settled: SaftDecimal? = null
+            val t = d.child("DocumentTotals")
+            if (t == null) problem(d, "required", "DocumentTotals is missing")
+            else {
+                known(t, "TaxPayable NetTotal GrossTotal Settlement Currency")
+                taxPayable = amount(t, "TaxPayable")
+                net = amount(t, "NetTotal")
+                gross = amount(t, "GrossTotal")
+                val s = t.child("Settlement")
+                if (s != null) settled = amount(s, "SettlementAmount")
+                val c = t.child("Currency")
+                if (c != null) currency = SaftCurrency(required(c, "CurrencyCode"), amount(c, "CurrencyAmount"), amount(c, "ExchangeRate"))
+            }
+            out.append(SaftPayment(required(d, "PaymentRefNo"), required(d, "ATCUD"), required(d, "TransactionDate"), required(d, "PaymentType"), status(d, "Payment", "SourcePayment"),
+                required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "CustomerID"), paymentLines, SaftDocumentTotals(taxPayable, net, gross, currency, settlementAmount = settled),
+                integer(d, "Period", 0, false), optional(d, "TransactionID"), optional(d, "Description"), optional(d, "SystemID"), methods, withholding(d)))
+        }
+        SaftPayments(integer(el, "NumberOfEntries", 0, true), amount(el, "TotalDebit"), amount(el, "TotalCredit"), out)
+    }
+}
+
+// Parses a whole file in memory. `error` is set when it can't be read as SAF-T (PT)
+// 1.04_01 at all; otherwise `file` holds what was there and `issues` what was wrong.
+// `maxBytes` guards memory. A DTD is refused, as abla-xml does by default.
+fun saftRead(source: string, maxBytes: int = 268435456): SaftReadResult {
+    val none = array<SaftIssue>()
+    val parsed = xmlParse(source, XmlOptions(maxBytes = maxBytes))
+    val document = parsed.document
+    if (document == null) {
+        val problem = parsed.error
+        if (problem != null) return SaftReadResult(null, none, "not XML: ${problem.code} at ${problem.line}:${problem.column}: ${problem.message}")
+        return SaftReadResult(null, none, "not XML")
+    }
+    val root = document.root
+    if (root.localName != "AuditFile") return SaftReadResult(null, none, "the root element isn't AuditFile")
+    if (root.namespaceUri != saftNamespace) return SaftReadResult(null, none, "the namespace isn't $saftNamespace: \"${root.namespaceUri}\"")
+    val headerElement = root.child("Header")
+    val master = root.child("MasterFiles")
+    if (headerElement == null || master == null) return SaftReadResult(null, none, "Header or MasterFiles is missing")
+    val version = headerElement.childText("AuditFileVersion")
+    if (version != saftAuditFileVersion) return SaftReadResult(null, none, "the version is \"$version\", this reads $saftAuditFileVersion")
+
+    val r = Reader(array<SaftIssue>())
+    r.known(root, "Header MasterFiles GeneralLedgerEntries SourceDocuments")
+    r.known(master, "GeneralLedgerAccounts Customer Supplier Product TaxTable")
+    val skipped: array<string> = []
+    if (master.child("GeneralLedgerAccounts") != null) skipped.append("GeneralLedgerAccounts")
+    if (root.child("GeneralLedgerEntries") != null) skipped.append("GeneralLedgerEntries")
+    var sales: SaftSalesInvoices? = null
+    var goods: SaftMovementOfGoods? = null
+    var work: SaftWorkingDocuments? = null
+    var receipts: SaftPayments? = null
+    val sources = root.child("SourceDocuments")
+    if (sources != null) {
+        r.known(sources, "SalesInvoices MovementOfGoods WorkingDocuments Payments")
+        val a = sources.child("SalesInvoices")
+        if (a != null) sales = r.invoices(a)
+        val b = sources.child("MovementOfGoods")
+        if (b != null) goods = r.movements(b)
+        val c = sources.child("WorkingDocuments")
+        if (c != null) work = r.workDocuments(c)
+        val d = sources.child("Payments")
+        if (d != null) receipts = r.receipts(d)
+    }
+    val file = SaftFile(r.header(headerElement), r.masterFiles(master), sales, goods, work, receipts, skipped)
+    val issues: array<SaftIssue> = []
+    for (issue in r.issues) issues.append(issue)
+    SaftReadResult(file, issues, "")
+}
