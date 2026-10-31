@@ -1,0 +1,45 @@
+// Prints random decimal operations with this library's results, for tools/check-decimals.py
+// to recompute with Python's decimal, an independent implementation.
+import "../src/decimal.ab"
+import "abla/io"
+import "abla/process"
+
+class Rng(var state: int) {
+    fun next(limit: int): int {
+        state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+        (state >>> 8) % limit
+    }
+}
+
+fun text(var r: Rng): string {
+    var out = if (r.next(4) == 0) "-" else ""
+    val whole = 1 + r.next(25)
+    for (i in 0 until whole) out = out + "${r.next(10)}"
+    val places = r.next(12)
+    if (places > 0) {
+        out = out + "."
+        for (i in 0 until places) out = out + "${r.next(10)}"
+    }
+    out
+}
+
+fun main: int {
+    var count = 0
+    for (c in processArgument(0)) count = count * 10 + (c - 48)
+    val r = Rng(42)
+    for (i in 0 until count) {
+        val a = text(r)
+        val b = text(r)
+        val x = dec(a)
+        val y = dec(b)
+        val places = r.next(9)
+        val mode = r.next(3)
+        println("add $a $b ${x.plus(y).text()}")
+        println("sub $a $b ${x.minus(y).text()}")
+        println("mul $a $b ${x.times(y).text()}")
+        println("cmp $a $b ${x.compare(y)}")
+        println("round $a $places $mode ${x.rounded(places, mode).text()}")
+        if (!y.isZero()) println("div $a $b $places $mode ${x.dividedBy(y, places, mode).text()}")
+    }
+    0
+}

@@ -1,0 +1,55 @@
+// Python's decimal checks these on many more values: tools/check-decimals.py.
+import "../src/decimal.ab"
+import "abla/test"
+
+fun main: int {
+    expectEqual(dec("1.50").text(), "1.50", "keeps its scale")
+    expectEqual(dec("0").text(), "0", "zero")
+    expectEqual(dec("-0.00").text(), "0.00", "no negative zero")
+    expectEqual(dec("007.10").text(), "7.10", "leading zeros go")
+    expectEqual(dec(".5").text(), "0.5", "no integer digits")
+    expectEqual(dec("5.").text(), "5", "no fraction digits")
+    expectEqual(dec("+1.2").text(), "1.2", "plus sign")
+    expect(saftDecimalParse("") == null, "empty")
+    expect(saftDecimalParse(".") == null, "only a dot")
+    expect(saftDecimalParse("1e5") == null, "no exponents")
+    expect(saftDecimalParse("1,5") == null, "no commas")
+    expect(saftDecimalParse("1.2.3") == null, "two dots")
+    expect(saftDecimalParse("--1") == null, "two signs")
+
+    // What a float would get wrong.
+    expectEqual(dec("0.1").plus(dec("0.2")).text(), "0.3", "0.1 + 0.2")
+    expectEqual(dec("1.005").rounded(2).text(), "1.01", "1.005 rounds up, unlike the double")
+    expectEqual(dec("2.675").money(), "2.68", "2.675")
+    expectEqual(dec("1.15").times(dec("100")).text(), "115.00", "1.15 x 100")
+    expectEqual(dec("99999999999999999999.99").plus(dec("0.01")).text(), "100000000000000000000.00", "past any int or double")
+    expectEqual(dec("123456789012345678.12").times(dec("987654321098765432.34")).text(), "121932631137021794483005639017052278.4008", "long product")
+
+    expectEqual(dec("0.125").rounded(2, saftRoundHalfUp).text(), "0.13", "half up")
+    expectEqual(dec("0.125").rounded(2, saftRoundHalfEven).text(), "0.12", "half even, down")
+    expectEqual(dec("0.135").rounded(2, saftRoundHalfEven).text(), "0.14", "half even, up")
+    expectEqual(dec("0.129").rounded(2, saftRoundDown).text(), "0.12", "down")
+    expectEqual(dec("-0.125").rounded(2).text(), "-0.13", "half up goes away from zero")
+    expectEqual(dec("0.004").rounded(2).text(), "0.00", "rounds to zero")
+    expectEqual(dec("-0.004").rounded(2).text(), "0.00", "no negative zero from rounding")
+    expectEqual(dec("0.995").rounded(2).text(), "1.00", "carries")
+    expectEqual(dec("999.995").money(), "1000.00", "carries a digit")
+    expectEqual(dec("5").rounded(2).text(), "5.00", "raises scale")
+    expectEqual(dec("0.0000001").rounded(2).text(), "0.00", "many leading zeros")
+    expectEqual(dec("0.5").rounded(0).text(), "1", "to a whole number")
+
+    expectEqual(dec("10").dividedBy(dec("3"), 4).text(), "3.3333", "division")
+    expectEqual(dec("20").dividedBy(dec("3"), 2).text(), "6.67", "rounds")
+    expectEqual(dec("1").dividedBy(dec("8"), 2, saftRoundHalfEven).text(), "0.12", "an exact tie stays a tie")
+    expectEqual(dec("1.000000001").dividedBy(dec("8"), 2, saftRoundHalfEven).text(), "0.13", "beyond the guard digits, no tie")
+    expectEqual(dec("-7").dividedBy(dec("2"), 0).text(), "-4", "negative division")
+
+    expectEqual(dec("1.50").compare(dec("1.5")), 0, "compares by value")
+    expectEqual(dec("-1").compare(dec("1")), -1, "signs")
+    expectEqual(dec("-2").compare(dec("-1")), -1, "negatives")
+    expect(dec("0.00").equalTo(dec("0")), "zeros")
+    expect(!dec("-0").isNegative(), "negative zero isn't negative")
+    expectEqual(dec("5").minus(dec("7.5")).text(), "-2.5", "goes negative")
+    expectEqual(dec("-5").abs().text(), "5", "abs")
+    testsPassed()
+}

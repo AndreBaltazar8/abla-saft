@@ -1,0 +1,292 @@
+// Exact decimal numbers for money, quantities and rates. No floating point
+// anywhere: a value is a sign, an unbounded integer and a count of decimal places.
+import "abla/text"
+import "abla/process"
+
+private val LIMB_BASE = 1000000000
+private val LIMB_DIGITS = 9
+
+// Half up rounds a tie away from zero, half even to the even neighbour, and down
+// drops the digits. Despacho 8632/2014 says "rounded off" and doesn't name a mode;
+// half up is this library's default and listed as unconfirmed in SOURCES.md.
+val saftRoundHalfUp = 0
+val saftRoundHalfEven = 1
+val saftRoundDown = 2
+
+class SaftDecimal(val negative: bool, val limbs: array<int>, val scale: int) {
+    fun isZero(): bool = limbs.size == 0
+
+    fun isNegative(): bool = negative && limbs.size > 0
+
+    fun abs(): SaftDecimal = SaftDecimal(false, limbs, scale)
+
+    fun negated(): SaftDecimal = SaftDecimal(!negative && limbs.size > 0, limbs, scale)
+
+    fun plus(other: SaftDecimal): SaftDecimal {
+        val target = if (scale > other.scale) scale else other.scale
+        val a = decRaise(limbs, target - scale)
+        val b = decRaise(other.limbs, target - other.scale)
+        if (negative == other.negative) return decMake(negative, decAdd(a, b), target)
+        val order = decCompare(a, b)
+        if (order == 0) return SaftDecimal(false, decEmpty(), target)
+        if (order > 0) decMake(negative, decSubtract(a, b), target)
+        else decMake(other.negative, decSubtract(b, a), target)
+    }
+
+    fun minus(other: SaftDecimal): SaftDecimal = plus(other.negated())
+
+    fun times(other: SaftDecimal): SaftDecimal =
+        decMake(negative != other.negative, decMultiply(limbs, other.limbs), scale + other.scale)
+
+    // -1, 0 or 1, by value: 1.50 equals 1.5.
+    fun compare(other: SaftDecimal): int {
+        val left = isNegative()
+        val right = other.isNegative()
+        if (left != right) return if (left) -1 else 1
+        val target = if (scale > other.scale) scale else other.scale
+        val order = decCompare(decRaise(limbs, target - scale), decRaise(other.limbs, target - other.scale))
+        if (left) -order else order
+    }
+
+    fun equalTo(other: SaftDecimal): bool = compare(other) == 0
+
+    // Exactly `places` decimals, rounding if digits are dropped.
+    fun rounded(places: int, mode: int = saftRoundHalfUp): SaftDecimal {
+        if (places >= scale) return SaftDecimal(negative, decRaise(limbs, places - scale), places)
+        val digits = decDigits(limbs)
+        val dropped = scale - places
+        val keep = digits.size - dropped
+        val head = if (keep > 0) digits.slice(0, keep) else ""
+        val tail = if (keep >= 0) digits.slice(keep, digits.size) else "0".repeat(-keep) + digits
+        var up = false
+        if (mode != saftRoundDown && tail.size > 0) {
+            val first = tail[0] - 48
+            var rest = false
+            for (i in 1 until tail.size) if (tail[i] != 48) rest = true
+            if (first > 5 || (first == 5 && rest)) up = true
+            else if (first == 5) {
+                if (mode == saftRoundHalfUp) up = true
+                else {
+                    val last = if (head.size > 0) head[head.size - 1] - 48 else 0
+                    up = last % 2 == 1
+                }
+            }
+        }
+        var kept = decFromDigits(head)
+        if (up) kept = decAdd(kept, decOne())
+        decMake(negative, kept, places)
+    }
+
+    // This value divided by `other`, to `places` decimals. A zero divisor is a panic,
+    // like any integer division in the language: callers check rates they take as input.
+    fun dividedBy(other: SaftDecimal, places: int, mode: int = saftRoundHalfUp): SaftDecimal {
+        if (other.isZero()) panic("SaftDecimal division by zero")
+        // Two guard places decide the rounding, and a sticky digit keeps ties exact.
+        val guard = places + 2
+        val shift = guard + other.scale - scale
+        val numerator = if (shift >= 0) decRaise(limbs, shift) else limbs
+        val denominator = if (shift >= 0) other.limbs else decRaise(other.limbs, -shift)
+        val quotient = decDivide(numerator, denominator)
+        val q = quotient.quotient
+        if (quotient.remainderZero) return decMake(negative != other.negative, q, guard).rounded(places, mode)
+        val sticky = decAdd(decRaise(q, 1), decOne())
+        decMake(negative != other.negative, sticky, guard + 1).rounded(places, mode)
+    }
+
+    // The value as written: scale decimals, a dot, no thousands separator.
+    fun text(): string {
+        val digits = decDigits(limbs)
+        val sign = if (isNegative()) "-" else ""
+        if (scale <= 0) return sign + (if (digits == "") "0" else digits) + "0".repeat(if (digits == "") 0 else -scale)
+        val padded = if (digits.size <= scale) "0".repeat(scale + 1 - digits.size) + digits else digits
+        val point = padded.size - scale
+        sign + padded.slice(0, point) + "." + padded.slice(point, padded.size)
+    }
+
+    // Exactly two decimals, half up: the format of the signed GrossTotal and the QR code.
+    fun money(): string = rounded(2).text()
+}
+
+private fun decEmpty(): array<int> {
+    val out: array<int> = []
+    out
+}
+
+private fun decSingle(value: int): array<int> {
+    val out: array<int> = []
+    if (value != 0) out.append(value)
+    out
+}
+
+private fun decOne(): array<int> = decSingle(1)
+
+private fun decMake(negative: bool, limbs: array<int>, scale: int): SaftDecimal {
+    val trimmed = decTrim(limbs)
+    SaftDecimal(negative && trimmed.size > 0, trimmed, scale)
+}
+
+private fun decTrim(limbs: array<int>): array<int> {
+    var size = limbs.size
+    while (size > 0 && limbs[size - 1] == 0) size = size - 1
+    val out: array<int> = []
+    for (i in 0 until size) out.append(limbs[i])
+    out
+}
+
+private fun decCompare(a: array<int>, b: array<int>): int {
+    val x = decTrim(a)
+    val y = decTrim(b)
+    if (x.size != y.size) return if (x.size > y.size) 1 else -1
+    var i = x.size - 1
+    while (i >= 0) {
+        if (x[i] != y[i]) return if (x[i] > y[i]) 1 else -1
+        i = i - 1
+    }
+    0
+}
+
+private fun decAdd(a: array<int>, b: array<int>): array<int> {
+    val out: array<int> = []
+    val size = if (a.size > b.size) a.size else b.size
+    var carry = 0
+    for (i in 0 until size) {
+        val v = (if (i < a.size) a[i] else 0) + (if (i < b.size) b[i] else 0) + carry
+        out.append(v % LIMB_BASE)
+        carry = v / LIMB_BASE
+    }
+    if (carry > 0) out.append(carry)
+    out
+}
+
+// a - b, where a >= b.
+private fun decSubtract(a: array<int>, b: array<int>): array<int> {
+    val out: array<int> = []
+    var borrow = 0
+    for (i in 0 until a.size) {
+        var v = a[i] - borrow - (if (i < b.size) b[i] else 0)
+        borrow = if (v < 0) 1 else 0
+        if (v < 0) v = v + LIMB_BASE
+        out.append(v)
+    }
+    decTrim(out)
+}
+
+private fun decMultiply(a: array<int>, b: array<int>): array<int> {
+    if (a.size == 0 || b.size == 0) return decEmpty()
+    val out = filledArray(a.size + b.size, 0)
+    for (i in 0 until a.size) {
+        var carry = 0
+        for (j in 0 until b.size) {
+            val v = out[i + j] + a[i] * b[j] + carry
+            out[i + j] = v % LIMB_BASE
+            carry = v / LIMB_BASE
+        }
+        var at = i + b.size
+        while (carry > 0) {
+            val v = out[at] + carry
+            out[at] = v % LIMB_BASE
+            carry = v / LIMB_BASE
+            at = at + 1
+        }
+    }
+    decTrim(out)
+}
+
+// limbs * 10^power.
+private fun decRaise(limbs: array<int>, power: int): array<int> {
+    val out: array<int> = []
+    if (limbs.size == 0) return out
+    for (i in 0 until power / LIMB_DIGITS) out.append(0)
+    var factor = 1
+    for (i in 0 until power % LIMB_DIGITS) factor = factor * 10
+    var carry = 0
+    for (limb in limbs) {
+        val v = limb * factor + carry
+        out.append(v % LIMB_BASE)
+        carry = v / LIMB_BASE
+    }
+    if (carry > 0) out.append(carry)
+    out
+}
+
+private fun decDigits(limbs: array<int>): string {
+    if (limbs.size == 0) return ""
+    var out = "${limbs[limbs.size - 1]}"
+    var i = limbs.size - 2
+    while (i >= 0) {
+        out = out + "${limbs[i]}".padStart(LIMB_DIGITS, "0")
+        i = i - 1
+    }
+    out
+}
+
+private fun decFromDigits(digits: string): array<int> {
+    val out: array<int> = []
+    var end = digits.size
+    while (end > 0) {
+        val begin = if (end > LIMB_DIGITS) end - LIMB_DIGITS else 0
+        var limb = 0
+        for (i in begin until end) limb = limb * 10 + (digits[i] - 48)
+        out.append(limb)
+        end = begin
+    }
+    decTrim(out)
+}
+
+private class DecQuotient(val quotient: array<int>, val remainderZero: bool)
+
+// Long division a digit at a time. Amounts are short, so simplicity wins.
+private fun decDivide(a: array<int>, b: array<int>): DecQuotient {
+    val digits = decDigits(a)
+    var quotient = ""
+    var remainder = decEmpty()
+    for (i in 0 until digits.size) {
+        remainder = decAdd(decRaise(remainder, 1), decSingle(digits[i] - 48))
+        var count = 0
+        while (decCompare(remainder, b) >= 0) {
+            remainder = decSubtract(remainder, b)
+            count = count + 1
+        }
+        quotient = quotient + "$count"
+    }
+    DecQuotient(decFromDigits(quotient), decTrim(remainder).size == 0)
+}
+
+// Reads the xs:decimal lexical form: optional sign, digits, optional dot and digits,
+// at least one digit in all. Null for anything else, including exponents.
+fun saftDecimalParse(text: string): SaftDecimal? {
+    var at = 0
+    var negative = false
+    if (at < text.size && (text[at] == 43 || text[at] == 45)) {
+        negative = text[at] == 45
+        at = at + 1
+    }
+    var digits = ""
+    var scale = 0
+    var seenDot = false
+    var count = 0
+    val begin = at
+    while (at < text.size) {
+        val c = text[at]
+        if (c == 46 && !seenDot) seenDot = true
+        else if (c >= 48 && c <= 57) {
+            count = count + 1
+            if (seenDot) scale = scale + 1
+        } else return null
+        at = at + 1
+    }
+    if (count == 0) return null
+    digits = text.slice(begin, text.size).replace(".", "")
+    val limbs = decFromDigits(digits)
+    SaftDecimal(negative && limbs.size > 0, limbs, scale)
+}
+
+// For values in code, as dec("23") or dec("1234.50"). A bad literal is a programming
+// error and panics; use saftDecimalParse for input.
+fun dec(text: string): SaftDecimal {
+    val value = saftDecimalParse(text)
+    if (value != null) return value
+    panic("not a decimal: $text")
+}
+
+fun saftDecimalZero(places: int = 2): SaftDecimal = SaftDecimal(false, decEmpty(), places)
