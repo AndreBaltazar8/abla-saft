@@ -3,50 +3,41 @@ import "decimal.ab"
 import "model.ab"
 import "abla/text"
 
-// NumberOfEntries counts every document. The two sums leave out A and F (4.1.1 to 4.1.3).
-fun saftSalesInvoices(invoices: array<SaftInvoice>): SaftSalesInvoices {
-    var debit = saftDecimalZero()
-    var credit = saftDecimalZero()
-    for (invoice in invoices) {
+// A section's control totals, a document at a time, so a file needn't be in memory to
+// add it up. Which document counts for what is here and nowhere else.
+class SaftTally(var entries: int = 0, var debit: SaftDecimal = saftDecimalZero(), var credit: SaftDecimal = saftDecimalZero(), var quantity: SaftDecimal = saftDecimalZero()) {
+    // NumberOfEntries counts every document. The two sums leave out A and F (4.1.1 to 4.1.3).
+    fun invoice(invoice: SaftInvoice): void {
+        entries = entries + 1
         if (invoice.status.status != "A" && invoice.status.status != "F") {
             debit = debit.plus(saftLinesDebit(invoice.lines))
             credit = credit.plus(saftLinesCredit(invoice.lines))
         }
+        return
     }
-    SaftSalesInvoices(invoices.size, debit, credit, invoices)
-}
 
-// NumberOfMovementLines counts the lines of every document, and the quantity leaves out
-// status A alone (4.2.1, 4.2.2). AT's demonstration file agrees, with one F among them.
-fun saftMovementOfGoods(movements: array<SaftStockMovement>): SaftMovementOfGoods {
-    var count = 0
-    var quantity = saftDecimalZero()
-    for (movement in movements) {
-        count = count + movement.lines.size
+    // NumberOfMovementLines counts the lines of every document, and the quantity leaves out
+    // status A alone (4.2.1, 4.2.2). AT's demonstration file agrees, with one F among them.
+    fun movement(movement: SaftStockMovement): void {
+        entries = entries + movement.lines.size
         if (movement.status.status != "A")
             for (line in movement.lines) quantity = quantity.plus(line.quantity)
+        return
     }
-    SaftMovementOfGoods(count, quantity, movements)
-}
 
-// The sums leave out status A alone (4.3.1 to 4.3.3), although F exists here too.
-fun saftWorkingDocuments(documents: array<SaftWorkDocument>): SaftWorkingDocuments {
-    var debit = saftDecimalZero()
-    var credit = saftDecimalZero()
-    for (document in documents) {
+    // The sums leave out status A alone (4.3.1 to 4.3.3), although F exists here too.
+    fun workDocument(document: SaftWorkDocument): void {
+        entries = entries + 1
         if (document.status.status != "A") {
             debit = debit.plus(saftLinesDebit(document.lines))
             credit = credit.plus(saftLinesCredit(document.lines))
         }
+        return
     }
-    SaftWorkingDocuments(documents.size, debit, credit, documents)
-}
 
-// The sums leave out status A (4.4.1 to 4.4.3).
-fun saftPayments(payments: array<SaftPayment>): SaftPayments {
-    var debit = saftDecimalZero()
-    var credit = saftDecimalZero()
-    for (payment in payments) {
+    // The sums leave out status A (4.4.1 to 4.4.3).
+    fun payment(payment: SaftPayment): void {
+        entries = entries + 1
         if (payment.status.status != "A") {
             for (line in payment.lines) {
                 val d = line.debitAmount
@@ -55,8 +46,32 @@ fun saftPayments(payments: array<SaftPayment>): SaftPayments {
                 if (c != null) credit = credit.plus(c)
             }
         }
+        return
     }
-    SaftPayments(payments.size, debit, credit, payments)
+}
+
+fun saftSalesInvoices(invoices: array<SaftInvoice>): SaftSalesInvoices {
+    val tally = SaftTally()
+    for (invoice in invoices) tally.invoice(invoice)
+    SaftSalesInvoices(tally.entries, tally.debit, tally.credit, invoices)
+}
+
+fun saftMovementOfGoods(movements: array<SaftStockMovement>): SaftMovementOfGoods {
+    val tally = SaftTally()
+    for (movement in movements) tally.movement(movement)
+    SaftMovementOfGoods(tally.entries, tally.quantity, movements)
+}
+
+fun saftWorkingDocuments(documents: array<SaftWorkDocument>): SaftWorkingDocuments {
+    val tally = SaftTally()
+    for (document in documents) tally.workDocument(document)
+    SaftWorkingDocuments(tally.entries, tally.debit, tally.credit, documents)
+}
+
+fun saftPayments(payments: array<SaftPayment>): SaftPayments {
+    val tally = SaftTally()
+    for (payment in payments) tally.payment(payment)
+    SaftPayments(tally.entries, tally.debit, tally.credit, payments)
 }
 
 fun saftLinesDebit(lines: array<SaftLine>): SaftDecimal {

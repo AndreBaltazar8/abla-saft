@@ -1,0 +1,164 @@
+// A SAF-T file of any size through files, for measuring what a program holds with
+// /usr/bin/time -v. Local only: see tools/big-saft.sh. All data is invented.
+//   big-saft write <path> <documents>   adds up control totals first, as SQL would
+//   big-saft bad-total <path> <documents>   the same with one wrong total: must fail
+//   big-saft read <path> [copy path]    with every check; the copy has to come out the same
+import "../src/saft.ab"
+import "../tests/support/samples.ab"
+import "../tests/support/streaming.ab"
+import github("AndreBaltazar8/abla-xml")
+import "abla/fs"
+import "abla/io"
+import "abla/process"
+
+fun count(text: string): int {
+    var value = 0
+    for (b in text) value = value * 10 + (b - 48)
+    value
+}
+
+fun bigMaster(): SaftMasterFiles {
+    val customers = sampleCustomers()
+    for (i in 1 until 5001) customers.append(SaftCustomer("K$i", "500000000", "Cliente número $i, Lda.", sampleAddress()))
+    val products = sampleProducts()
+    for (i in 1 until 5001) products.append(SaftProduct("P", "P-$i", "Produto número $i", "P-$i"))
+    SaftMasterFiles(customers, sampleSuppliers(), products, sampleTaxTable())
+}
+
+fun lineOf(number: int, n: int, debit: bool): SaftLine {
+    val quantity = dec("${1 + n % 9}.5")
+    val price = dec("${1 + n % 977}.${10 + n % 89}")
+    val amount = quantity.times(price)
+    val code = "P-${1 + n % 5000}"
+    val tax = vat("PT", if (n % 3 == 0) "RED" else "NOR", if (n % 3 == 0) "6" else "23")
+    if (debit) SaftLine(number, code, "Produto número ${1 + n % 5000}", quantity, "UN", price, "Linha de nota de crédito é € 世 & <especial>", debitAmount = amount, tax = tax, taxPointDate = "2026-03-14", references = [SaftLineReference("FT A/1", "Devolução")])
+    else SaftLine(number, code, "Produto número ${1 + n % 5000}", quantity, "UN", price, "Linha com acentos é € 世 & <especial> número $n", creditAmount = amount, tax = tax, taxPointDate = "2026-03-14")
+}
+
+fun movementLine(number: int, n: int): SaftLine {
+    val quantity = dec("${1 + n % 9}")
+    SaftLine(number, "P-${1 + n % 5000}", "Produto número ${1 + n % 5000}", quantity, "UN", dec("${1 + n % 977}.50"), "Guia de transporte $n", creditAmount = quantity.times(dec("${1 + n % 977}.50")))
+}
+
+fun linesFor(n: int, debit: bool): array<SaftLine> {
+    val out: array<SaftLine> = []
+    for (i in 1 until 6 + n % 7) out.append(lineOf(i, n + i, debit))
+    out
+}
+
+val seriesCount = 12
+val invoiceTypes = ["FT", "FS", "FR", "NC", "ND"]
+
+// The n-th invoice: each of 12 series of 5 types, in sequence.
+fun invoiceAt(n: int): SaftInvoice {
+    val kind = invoiceTypes[n % invoiceTypes.size]
+    val series = (n / invoiceTypes.size) % seriesCount
+    val sequence = n / (invoiceTypes.size * seriesCount) + 1
+    val status = if (n % 31 == 0) normalStatus("A", "Anulado") else normalStatus()
+    val d = invoiceOf(kind, "S$series", sequence, "K${1 + n % 5000}", linesFor(n, kind == "NC"), status)
+    d
+}
+
+fun movementAt(n: int): SaftStockMovement {
+    val lines: array<SaftLine> = []
+    for (i in 1 until 4 + n % 5) lines.append(movementLine(i, n + i))
+    movementOf("GT", n + 1, lines, if (n % 37 == 0) normalStatus("A", "Anulada") else normalStatus())
+}
+
+fun workAt(n: int): SaftWorkDocument = workOf("PF", n + 1, linesFor(n, false), if (n % 41 == 0) normalStatus("A", "Anulado") else normalStatus())
+
+fun paymentAt(n: int): SaftPayment = paymentOf(if (n % 2 == 0) "RG" else "RC", n / 2 + 1, "${100 + n % 900}.00", if (n % 43 == 0) normalStatus("A", "Anulado") else normalStatus())
+
+// A signature's cost is the caller's: the fake signer here only gives each a Hash.
+class Chains(val previous: Map<string, string>) {
+    fun invoice(var d: SaftInvoice): void {
+        val key = d.invoiceNo.slice(0, d.invoiceNo.lastIndexOf("/"))
+        previous.set(key, saftSignInvoice(d, FakeSigner(), previous.get(key) ?? "").hash)
+        return
+    }
+
+    fun movement(var d: SaftStockMovement): void {
+        previous.set("GT", saftSignMovement(d, FakeSigner(), previous.get("GT") ?? "").hash)
+        return
+    }
+
+    fun workDocument(var d: SaftWorkDocument): void {
+        previous.set("PF", saftSignWorkDocument(d, FakeSigner(), previous.get("PF") ?? "").hash)
+        return
+    }
+}
+
+fun write(target: string, documents: int, wrongTotal: bool): int {
+    // A tenth each of movements, working documents and receipts, the rest invoices.
+    val others = documents / 10
+    val invoices = documents - 3 * others
+    // The caller's SQL: totals before any document goes out.
+    val sales = SaftTally()
+    for (n in 0 until invoices) sales.invoice(invoiceAt(n))
+    val goods = SaftTally()
+    for (n in 0 until others) goods.movement(movementAt(n))
+    val work = SaftTally()
+    for (n in 0 until others) work.workDocument(workAt(n))
+    val receipts = SaftTally()
+    for (n in 0 until others) receipts.payment(paymentAt(n))
+
+    val w = saftStreamWriter(sampleHeader(), bigMaster(), saftFileSink(path(target)))
+    val chains = Chains(Map())
+    w.startSalesInvoices(sales.entries, if (wrongTotal) sales.debit.plus(dec("0.01")) else sales.debit, sales.credit)
+    for (n in 0 until invoices) {
+        val d = invoiceAt(n)
+        chains.invoice(d)
+        w.invoice(d)
+    }
+    w.endSection()
+    w.startMovementOfGoods(goods.entries, goods.quantity)
+    for (n in 0 until others) {
+        val d = movementAt(n)
+        chains.movement(d)
+        w.movement(d)
+    }
+    w.endSection()
+    w.startWorkingDocuments(work.entries, work.debit, work.credit)
+    for (n in 0 until others) {
+        val d = workAt(n)
+        chains.workDocument(d)
+        w.workDocument(d)
+    }
+    w.endSection()
+    w.startPayments(receipts.entries, receipts.debit, receipts.credit)
+    for (n in 0 until others) w.payment(paymentAt(n))
+    w.endSection()
+    val result = w.finish()
+    println("${result.documents} documents, ${result.bytesWritten} bytes, ${result.issues.size} issues kept, ${result.issuesDropped} dropped: ${result.errorMessage}")
+    for (i in result.issues) if (i.severity == saftSeverityError) println("  ${i.code} ${i.path}: ${i.message}")
+    if (result.succeeded) 0 else 1
+}
+
+fun read(source: string, copyTo: string): int {
+    val reader = saftStreamReader(saftFileSource(path(source)), SaftStreamReadOptions(maxBytes = 1099511627776))
+    if (copyTo != "") {
+        val copied = copyEvents(reader, saftFileSink(path(copyTo)))
+        if (copied == null || !copied.succeeded) {
+            println("the copy failed: ${reader.error}")
+            return 1
+        }
+        println("copied ${copied.documents} documents, ${copied.bytesWritten} bytes")
+    } else {
+        var last = 0
+        while (last != saftReadEnd && last != saftReadError) last = reader.next()
+    }
+    val report = reader.report()
+    println("${report.documents} documents read: ${report.errors} errors, ${report.warnings} warnings, ${report.issuesDropped} dropped; chains: ${report.chains.unsigned} unsigned, ${report.chains.problems.size} problems")
+    if (report.error != "") println("error: ${report.error}")
+    for (i in report.issues) if (i.severity == saftSeverityError) println("  ${i.code} ${i.path}: ${i.message}")
+    if (report.succeeded && report.chains.ok()) 0 else 1
+}
+
+fun main: int {
+    val mode = processArgument(0)
+    if (mode == "write") return write(processArgument(1), count(processArgument(2)), false)
+    if (mode == "bad-total") return write(processArgument(1), count(processArgument(2)), true)
+    if (mode == "read") return read(processArgument(1), if (processArgumentCount() > 2) processArgument(2) else "")
+    eprintln("usage: big-saft write|bad-total <path> <documents> | big-saft read <path> [copy]")
+    2
+}

@@ -409,12 +409,14 @@ class SaftChainReport(
     val integrated: int,
     // First documents of a series whose number isn't 1 and that don't verify with an
     // empty previous Hash: the previous document is outside the file.
-    val unverifiable: int
+    val unverifiable: int,
+    // Problems found beyond those listed, in a file too big to list them all.
+    val problemsDropped: int = 0
 ) {
     fun ok(): bool = problems.size == 0
 }
 
-private class ChainDocument(
+class ChainDocument(
     val number: string,
     val sequence: int,
     val date: string,
@@ -452,10 +454,14 @@ private fun sequenceOf(number: string): int {
 }
 
 // Documents chain within "the same type and series" (article 6 n.º 1 e)).
+private fun chainKey(type: string, number: string): string {
+    val space = number.indexOf(" ")
+    val slash = number.lastIndexOf("/")
+    if (space > 0 && slash > space) type + " " + number.slice(0, slash) else type + " " + number
+}
+
 private fun addToSeries(var all: array<ChainSeries>, type: string, document: ChainDocument): void {
-    val space = document.number.indexOf(" ")
-    val slash = document.number.lastIndexOf("/")
-    val key = if (space > 0 && slash > space) type + " " + document.number.slice(0, slash) else type + " " + document.number
+    val key = chainKey(type, document.number)
     var at = -1
     for (i in 0 until all.size) if (all[i].key == key) at = i
     if (at < 0) {
@@ -486,39 +492,117 @@ fun saftVerifyChains(file: SaftFile, key: SaftRsaPublicKey? = null): SaftChainRe
         for (d in work.documents)
             addToSeries(all, d.workType, ChainDocument(d.documentNumber, sequenceOf(d.documentNumber), d.workDate, d.systemEntryDate, d.totals.grossTotal, d.hash, d.status.sourceBilling))
 
-    val problems: array<SaftChainProblem> = []
-    var verified = 0
-    var unsigned = 0
-    var integrated = 0
-    var unverifiable = 0
+    val walk = ChainWalk(key, array<SaftChainProblem>(), -1)
     for (series in all) {
-        var previous = ""
-        var previousSequence = -1
-        var previousYear = ""
-        for (d in series.documents) {
-            if (d.sequence < 0) problems.append(SaftChainProblem("bad_number", d.number, "the sequence number can't be read"))
-            else if (previousSequence >= 0 && d.sequence == previousSequence) problems.append(SaftChainProblem("duplicate", d.number, "the sequence number repeats"))
-            else if (previousSequence >= 0 && d.sequence != previousSequence + 1) problems.append(SaftChainProblem("sequence_gap", d.number, "follows number $previousSequence"))
-            val year = if (d.date.size >= 4) d.date.slice(0, 4) else ""
-            if (d.hash == "0") unsigned = unsigned + 1
-            else if (d.origin == "I") integrated = integrated + 1
-            else if (d.hash.size != saftHashCharacters) problems.append(SaftChainProblem("bad_hash", d.number, "Hash has ${d.hash.size} characters, not $saftHashCharacters"))
-            else if (key != null) {
-                if (saftVerifySignature(key, saftSignatureMessage(d.date, d.entry, d.number, d.gross, previous), d.hash)) verified = verified + 1
-                else {
-                    val empty = saftSignatureMessage(d.date, d.entry, d.number, d.gross, "")
-                    val restarts = saftVerifySignature(key, empty, d.hash)
-                    // A series running over years may restart its chain each year (Despacho 2.1.5).
-                    if (restarts && previousSequence >= 0 && year != previousYear) verified = verified + 1
-                    else if (restarts && previousSequence < 0) verified = verified + 1
-                    else if (previousSequence < 0 && d.sequence != 1) unverifiable = unverifiable + 1
-                    else problems.append(SaftChainProblem("bad_signature", d.number, "the signature doesn't match the fields and the previous Hash"))
-                }
-            }
-            previous = d.hash
-            previousSequence = d.sequence
-            previousYear = year
-        }
+        val place = ChainPlace()
+        for (d in series.documents) walk.step(place, d)
     }
-    SaftChainReport(problems, verified, unsigned, integrated, unverifiable)
+    walk.report()
 }
+
+// Where a series has got to.
+class ChainPlace(var previous: string = "", var previousSequence: int = -1, var previousYear: string = "")
+
+class ChainWalk(
+    val key: SaftRsaPublicKey?,
+    val problems: array<SaftChainProblem>,
+    // How many problems to keep; -1 for all.
+    val maxProblems: int,
+    var verified: int = 0,
+    var unsigned: int = 0,
+    var integrated: int = 0,
+    var unverifiable: int = 0,
+    var dropped: int = 0
+) {
+    fun problem(code: string, document: string, message: string): void {
+        if (maxProblems < 0 || problems.size < maxProblems) problems.append(SaftChainProblem(code, document, message))
+        else dropped = dropped + 1
+        return
+    }
+
+    fun step(var place: ChainPlace, d: ChainDocument): void {
+        val previous = place.previous
+        val previousSequence = place.previousSequence
+        val previousYear = place.previousYear
+        val publicKey = key
+        if (d.sequence < 0) problem("bad_number", d.number, "the sequence number can't be read")
+        else if (previousSequence >= 0 && d.sequence == previousSequence) problem("duplicate", d.number, "the sequence number repeats")
+        else if (previousSequence >= 0 && d.sequence < previousSequence) problem("out_of_order", d.number, "comes after number $previousSequence")
+        else if (previousSequence >= 0 && d.sequence != previousSequence + 1) problem("sequence_gap", d.number, "follows number $previousSequence")
+        val year = if (d.date.size >= 4) d.date.slice(0, 4) else ""
+        if (d.hash == "0") unsigned = unsigned + 1
+        else if (d.origin == "I") integrated = integrated + 1
+        else if (d.hash.size != saftHashCharacters) problem("bad_hash", d.number, "Hash has ${d.hash.size} characters, not $saftHashCharacters")
+        else if (publicKey != null) {
+            if (saftVerifySignature(publicKey, saftSignatureMessage(d.date, d.entry, d.number, d.gross, previous), d.hash)) verified = verified + 1
+            else {
+                val empty = saftSignatureMessage(d.date, d.entry, d.number, d.gross, "")
+                val restarts = saftVerifySignature(publicKey, empty, d.hash)
+                // A series running over years may restart its chain each year (Despacho 2.1.5).
+                if (restarts && previousSequence >= 0 && year != previousYear) verified = verified + 1
+                else if (restarts && previousSequence < 0) verified = verified + 1
+                else if (previousSequence < 0 && d.sequence != 1) unverifiable = unverifiable + 1
+                else problem("bad_signature", d.number, "the signature doesn't match the fields and the previous Hash")
+            }
+        }
+        place.previous = d.hash
+        place.previousSequence = d.sequence
+        place.previousYear = year
+        return
+    }
+
+    fun report(): SaftChainReport {
+        val out: array<SaftChainProblem> = []
+        for (p in problems) out.append(p)
+        SaftChainReport(out, verified, unsigned, integrated, unverifiable, dropped)
+    }
+}
+
+// saftVerifyChains a document at a time, holding one place for each series. Without the
+// whole file, documents can't be put in order first, so each series must come in sequence
+// order, as files nearly always do: a number lower than the one before it is the problem
+// out_of_order, and its signature doesn't verify either.
+class SaftChainChecker(
+    val walk: ChainWalk,
+    val maxSeries: int,
+    val series: Map<string, int>,
+    val places: array<ChainPlace>,
+    var overflowed: bool = false
+) {
+    fun add(type: string, document: ChainDocument): void {
+        val key = chainKey(type, document.number)
+        var at = series.get(key) ?? -1
+        if (at < 0) {
+            if (places.size >= maxSeries) {
+                if (!overflowed) walk.problem("too_many_series", document.number, "more than $maxSeries series: the rest go unchecked")
+                overflowed = true
+                return
+            }
+            at = places.size
+            series.set(key, at)
+            places.append(ChainPlace())
+        }
+        walk.step(places[at], document)
+        return
+    }
+
+    fun invoice(d: SaftInvoice): void {
+        add(d.invoiceType, ChainDocument(d.invoiceNo, sequenceOf(d.invoiceNo), d.invoiceDate, d.systemEntryDate, d.totals.grossTotal, d.hash, d.status.sourceBilling))
+        return
+    }
+
+    fun movement(d: SaftStockMovement): void {
+        add(d.movementType, ChainDocument(d.documentNumber, sequenceOf(d.documentNumber), d.movementDate, d.systemEntryDate, d.totals.grossTotal, d.hash, d.status.sourceBilling))
+        return
+    }
+
+    fun workDocument(d: SaftWorkDocument): void {
+        add(d.workType, ChainDocument(d.documentNumber, sequenceOf(d.documentNumber), d.workDate, d.systemEntryDate, d.totals.grossTotal, d.hash, d.status.sourceBilling))
+        return
+    }
+
+    fun report(): SaftChainReport = walk.report()
+}
+
+fun saftChainChecker(key: SaftRsaPublicKey? = null, maxSeries: int = 65536, maxProblems: int = 1000): SaftChainChecker =
+    SaftChainChecker(ChainWalk(key, array<SaftChainProblem>(), maxProblems), maxSeries, Map(), array<ChainPlace>())

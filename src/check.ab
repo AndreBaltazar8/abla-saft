@@ -131,14 +131,29 @@ private fun validTransactionId(value: string): bool {
     rest.size == 2 && rest[0] != "" && rest[1] != "" && rest[0].codePointCount() <= 30 && rest[1].codePointCount() <= 20
 }
 
-private class Checker(val issues: array<SaftIssue>) {
+class SaftChecker(
+    val issues: array<SaftIssue>,
+    // How many of each severity to keep, for a file too big to list them all; -1 for all.
+    val maxIssues: int = -1,
+    var errors: int = 0,
+    var warnings: int = 0,
+    var dropped: int = 0
+) {
+    fun keep(issue: SaftIssue, count: int): void {
+        if (maxIssues < 0 || count <= maxIssues) issues.append(issue)
+        else dropped = dropped + 1
+        return
+    }
+
     fun error(code: string, path: string, message: string): void {
-        issues.append(SaftIssue(saftSeverityError, code, path, message))
+        errors = errors + 1
+        keep(SaftIssue(saftSeverityError, code, path, message), errors)
         return
     }
 
     fun warning(code: string, path: string, message: string): void {
-        issues.append(SaftIssue(saftSeverityWarning, code, path, message))
+        warnings = warnings + 1
+        keep(SaftIssue(saftSeverityWarning, code, path, message), warnings)
         return
     }
 
@@ -350,10 +365,14 @@ private class Checker(val issues: array<SaftIssue>) {
         return
     }
 
-    fun documentNumber(p: string, name: string, value: string, var seen: TextSet): void {
+    fun documentNumber(p: string, name: string, value: string, var seen: SaftDocumentNumbers): void {
         text(p + "." + name, value, 1, 60)
         pattern(p + "." + name, saftValidDocumentNumber(value), "must look like FT A/1")
         if (!seen.add(value)) error("duplicate", p, name + " appears twice")
+        if (seen.overflowed && !seen.reported) {
+            seen.reported = true
+            error("too_many_numbers", p, "document numbers are too scattered to check for duplicates within the limit")
+        }
         return
     }
 
@@ -535,6 +554,111 @@ private class Checker(val issues: array<SaftIssue>) {
         return
     }
 
+    fun invoice(d: SaftInvoice, var seen: SaftDocumentNumbers, var customers: TextSet, var products: TextSet): void {
+        val p = "Invoice[${d.invoiceNo}]"
+        documentNumber(p, "InvoiceNo", d.invoiceNo, seen)
+        atcud(p, d.atcud, d.invoiceNo)
+        status(p + ".DocumentStatus", d.status, "N S A R F")
+        signature(p, d.hash, d.hashControl)
+        date(p + ".InvoiceDate", d.invoiceDate)
+        oneOf(p + ".InvoiceType", d.invoiceType, "FT FS FR ND NC VD TV TD AA DA RP RE CS LD RA")
+        indicator(p + ".SelfBillingIndicator", d.selfBillingIndicator)
+        indicator(p + ".CashVATSchemeIndicator", d.cashVatSchemeIndicator)
+        indicator(p + ".ThirdPartiesBillingIndicator", d.thirdPartiesBillingIndicator)
+        common(p, d.sourceId, d.systemEntryDate, d.customerId, customers, d.eacCode, d.transactionId, d.period)
+        shippingPoint(p + ".ShipTo", d.shipTo)
+        shippingPoint(p + ".ShipFrom", d.shipFrom)
+        optTimestamp(p + ".MovementEndTime", d.movementEndTime)
+        optTimestamp(p + ".MovementStartTime", d.movementStartTime)
+        if (d.lines.size == 0) error("required", p + ".Line", "needs at least one line")
+        for (l in d.lines) line(p, l, LINE_INVOICE, products)
+        totals(p + ".DocumentTotals", d.totals)
+        if (d.totals.settlementAmount != null) error("not_allowed", p + ".DocumentTotals", "SettlementAmount belongs to receipts")
+        withholding(p, d.withholding)
+        if (d.invoiceType == "NC")
+            for (l in d.lines) if (l.creditAmount != null) warning("portaria", p, "a credit note's lines normally go to DebitAmount")
+        return
+    }
+
+    fun movement(d: SaftStockMovement, var seen: SaftDocumentNumbers, var customers: TextSet, var suppliers: TextSet, var products: TextSet): void {
+        val p = "StockMovement[${d.documentNumber}]"
+        documentNumber(p, "DocumentNumber", d.documentNumber, seen)
+        atcud(p, d.atcud, d.documentNumber)
+        status(p + ".DocumentStatus", d.status, "N T A F R")
+        signature(p, d.hash, d.hashControl)
+        date(p + ".MovementDate", d.movementDate)
+        oneOf(p + ".MovementType", d.movementType, "GR GT GA GC GD")
+        text(p + ".SourceID", d.sourceId, 1, 30)
+        timestamp(p + ".SystemEntryDate", d.systemEntryDate)
+        eac(p, d.eacCode)
+        transaction(p, d.transactionId)
+        period(p + ".Period", d.period)
+        if ((d.customerId == "") == (d.supplierId == "")) error("choice", p, "needs exactly one of CustomerID and SupplierID")
+        if (d.customerId != "" && !customers.has(d.customerId)) error("unknown_customer", p + ".CustomerID", "\"${d.customerId}\" isn't in the Customer table")
+        if (d.supplierId != "" && !suppliers.has(d.supplierId)) error("unknown_supplier", p + ".SupplierID", "\"${d.supplierId}\" isn't in the Supplier table")
+        optText(p + ".MovementComments", d.movementComments, 60)
+        shippingPoint(p + ".ShipTo", d.shipTo)
+        shippingPoint(p + ".ShipFrom", d.shipFrom)
+        optTimestamp(p + ".MovementEndTime", d.movementEndTime)
+        timestamp(p + ".MovementStartTime", d.movementStartTime)
+        optText(p + ".ATDocCodeID", d.atDocCodeId, 200)
+        if (d.lines.size == 0) error("required", p + ".Line", "needs at least one line")
+        for (l in d.lines) line(p, l, LINE_MOVEMENT, products)
+        totals(p + ".DocumentTotals", d.totals)
+        return
+    }
+
+    fun workDocument(d: SaftWorkDocument, var seen: SaftDocumentNumbers, var customers: TextSet, var products: TextSet): void {
+        val p = "WorkDocument[${d.documentNumber}]"
+        documentNumber(p, "DocumentNumber", d.documentNumber, seen)
+        atcud(p, d.atcud, d.documentNumber)
+        status(p + ".DocumentStatus", d.status, "N A F")
+        signature(p, d.hash, d.hashControl)
+        date(p + ".WorkDate", d.workDate)
+        oneOf(p + ".WorkType", d.workType, "CM CC FC FO NE OU OR PF DC RP RE CS LD RA")
+        common(p, d.sourceId, d.systemEntryDate, d.customerId, customers, d.eacCode, d.transactionId, d.period)
+        if (d.lines.size == 0) error("required", p + ".Line", "needs at least one line")
+        for (l in d.lines) line(p, l, LINE_WORK, products)
+        totals(p + ".DocumentTotals", d.totals)
+        return
+    }
+
+    fun payment(d: SaftPayment, var seen: SaftDocumentNumbers, var customers: TextSet): void {
+        val p = "Payment[${d.paymentRefNo}]"
+        documentNumber(p, "PaymentRefNo", d.paymentRefNo, seen)
+        atcud(p, d.atcud, d.paymentRefNo)
+        transaction(p, d.transactionId)
+        period(p + ".Period", d.period)
+        date(p + ".TransactionDate", d.transactionDate)
+        oneOf(p + ".PaymentType", d.paymentType, "RC RG")
+        optText(p + ".Description", d.description, 200)
+        optText(p + ".SystemID", d.systemId, 60)
+        status(p + ".DocumentStatus", d.status, "N A")
+        for (m in d.methods) method(p + ".PaymentMethod", m)
+        common(p, d.sourceId, d.systemEntryDate, d.customerId, customers, "", "", 0)
+        if (d.lines.size == 0) error("required", p + ".Line", "needs at least one line")
+        for (l in d.lines) {
+            val q = "$p.Line[${l.lineNumber}]"
+            if (l.lineNumber < 0) error("negative", q, "LineNumber is negative")
+            if (l.sourceDocuments.size == 0) error("required", q + ".SourceDocumentID", "needs at least one")
+            for (s in l.sourceDocuments) {
+                text(q + ".OriginatingON", s.originatingOn, 1, 60)
+                date(q + ".InvoiceDate", s.invoiceDate)
+                optText(q + ".Description", s.description, 200)
+            }
+            optAmount(q + ".SettlementAmount", l.settlementAmount)
+            if ((l.debitAmount == null) == (l.creditAmount == null)) error("choice", q, "needs exactly one of DebitAmount and CreditAmount")
+            optAmount(q + ".DebitAmount", l.debitAmount)
+            optAmount(q + ".CreditAmount", l.creditAmount)
+            tax(q, l.tax, LINE_WORK)
+            exemption(q, l.tax, l.taxExemptionReason, l.taxExemptionCode)
+            if (d.paymentType == "RC" && l.tax == null) error("assert", q + ".Tax", "a cash-VAT receipt (RC) needs Tax on every line")
+        }
+        totals(p + ".DocumentTotals", d.totals)
+        withholding(p, d.withholding)
+        return
+    }
+
     fun common(p: string, source: string, entry: string, customer: string, var customers: TextSet, eacCode: string, transactionId: string, month: int): void {
         text(p + ".SourceID", source, 1, 30)
         timestamp(p + ".SystemEntryDate", entry)
@@ -552,7 +676,7 @@ private val LINE_MOVEMENT = 1
 private val LINE_WORK = 2
 
 // Membership by exact text, in hash buckets.
-private class TextSet(val buckets: array<array<string>> = array<array<string>>()) {
+class TextSet(val buckets: array<array<string>> = array<array<string>>()) {
     fun slot(value: string): int {
         if (buckets.size == 0) for (i in 0 until 1024) buckets.append(array<string>())
         var h = 5381
@@ -574,22 +698,129 @@ private class TextSet(val buckets: array<array<string>> = array<array<string>>()
     }
 }
 
+// Which document numbers have been seen, exactly, in memory that grows with how scattered
+// the numbers are and not how many there are: each series keeps ranges, so a series
+// numbered in sequence is one range. A number written some other way than a plain
+// integer, such as with a leading zero, is a different text and is kept whole.
+class SaftDocumentNumbers(
+    // The most ranges and texts to keep. Past it, a number can't be told apart from one
+    // already seen: `overflowed` says so, and the checker makes that an error.
+    val limit: int,
+    val series: Map<string, int>,
+    val starts: array<array<int>>,
+    val ends: array<array<int>>,
+    val others: TextSet,
+    var kept: int = 0,
+    var overflowed: bool = false,
+    var reported: bool = false
+) {
+    fun room(): bool {
+        if (limit >= 0 && kept >= limit) {
+            overflowed = true
+            return false
+        }
+        kept = kept + 1
+        true
+    }
+
+    // False if it was there already.
+    fun add(value: string): bool {
+        val slash = value.lastIndexOf("/")
+        val digits = if (slash > 0) value.size - slash - 1 else 0
+        if (digits == 0 || digits > 18 || (digits > 1 && value[slash + 1] == 48) || !isDigits(value.slice(slash + 1, value.size))) {
+            if (others.has(value)) return false
+            if (room()) others.add(value)
+            return true
+        }
+        val name = value.slice(0, slash)
+        var at = series.get(name) ?? -1
+        if (at < 0) {
+            if (!room()) return true
+            at = starts.size
+            series.set(name, at)
+            starts.append(array<int>())
+            ends.append(array<int>())
+        }
+        addNumber(at, number(value.slice(slash + 1, value.size)))
+    }
+
+    fun addNumber(at: int, n: int): bool {
+        val size = starts[at].size
+        // The usual case: the next number of the last range.
+        if (size > 0 && ends[at][size - 1] + 1 == n) {
+            ends[at][size - 1] = n
+            return true
+        }
+        // The first range starting after n.
+        var low = 0
+        var high = size
+        while (low < high) {
+            val middle = (low + high) / 2
+            if (starts[at][middle] > n) high = middle else low = middle + 1
+        }
+        if (low > 0 && ends[at][low - 1] >= n) return false
+        val joinsBelow = low > 0 && ends[at][low - 1] + 1 == n
+        val joinsAbove = low < size && starts[at][low] - 1 == n
+        if (joinsBelow && joinsAbove) {
+            ends[at][low - 1] = ends[at][low]
+            var i = low
+            while (i + 1 < size) {
+                starts[at][i] = starts[at][i + 1]
+                ends[at][i] = ends[at][i + 1]
+                i = i + 1
+            }
+            starts[at].truncate(size - 1)
+            ends[at].truncate(size - 1)
+            kept = kept - 1
+        } else if (joinsBelow) {
+            ends[at][low - 1] = n
+        } else if (joinsAbove) {
+            starts[at][low] = n
+        } else if (room()) {
+            starts[at].append(0)
+            ends[at].append(0)
+            var i = size
+            while (i > low) {
+                starts[at][i] = starts[at][i - 1]
+                ends[at][i] = ends[at][i - 1]
+                i = i - 1
+            }
+            starts[at][low] = n
+            ends[at][low] = n
+        }
+        true
+    }
+}
+
+fun saftDocumentNumbers(limit: int = -1): SaftDocumentNumbers =
+    SaftDocumentNumbers(limit, Map(), array<array<int>>(), array<array<int>>(), TextSet())
+
 private fun productSet(m: SaftMasterFiles): TextSet {
     val set = TextSet()
     for (p in m.products) set.add(p.productCode)
     set
 }
 
+private fun customerSet(m: SaftMasterFiles): TextSet {
+    val set = TextSet()
+    for (x in m.customers) set.add(x.customerId)
+    set
+}
+
+private fun supplierSet(m: SaftMasterFiles): TextSet {
+    val set = TextSet()
+    for (x in m.suppliers) set.add(x.supplierId)
+    set
+}
+
 // Everything found, in file order. An empty result, or one with only warnings, means
 // the program found nothing wrong, not that AT would accept the file.
 fun saftCheck(file: SaftFile): array<SaftIssue> {
-    val c = Checker(array<SaftIssue>())
+    val c = SaftChecker(array<SaftIssue>())
     c.header(file.header)
     c.masterFiles(file.masterFiles)
-    val customers = TextSet()
-    for (x in file.masterFiles.customers) customers.add(x.customerId)
-    val suppliers = TextSet()
-    for (x in file.masterFiles.suppliers) suppliers.add(x.supplierId)
+    val customers = customerSet(file.masterFiles)
+    val suppliers = supplierSet(file.masterFiles)
     val products = productSet(file.masterFiles)
 
     val sales = file.salesInvoices
@@ -598,31 +829,8 @@ fun saftCheck(file: SaftFile): array<SaftIssue> {
         c.count("SalesInvoices.NumberOfEntries", sales.numberOfEntries, fresh.numberOfEntries)
         c.control("SalesInvoices.TotalDebit", sales.totalDebit, fresh.totalDebit)
         c.control("SalesInvoices.TotalCredit", sales.totalCredit, fresh.totalCredit)
-        val seen = TextSet()
-        for (d in sales.invoices) {
-            val p = "Invoice[${d.invoiceNo}]"
-            c.documentNumber(p, "InvoiceNo", d.invoiceNo, seen)
-            c.atcud(p, d.atcud, d.invoiceNo)
-            c.status(p + ".DocumentStatus", d.status, "N S A R F")
-            c.signature(p, d.hash, d.hashControl)
-            c.date(p + ".InvoiceDate", d.invoiceDate)
-            c.oneOf(p + ".InvoiceType", d.invoiceType, "FT FS FR ND NC VD TV TD AA DA RP RE CS LD RA")
-            c.indicator(p + ".SelfBillingIndicator", d.selfBillingIndicator)
-            c.indicator(p + ".CashVATSchemeIndicator", d.cashVatSchemeIndicator)
-            c.indicator(p + ".ThirdPartiesBillingIndicator", d.thirdPartiesBillingIndicator)
-            c.common(p, d.sourceId, d.systemEntryDate, d.customerId, customers, d.eacCode, d.transactionId, d.period)
-            c.shippingPoint(p + ".ShipTo", d.shipTo)
-            c.shippingPoint(p + ".ShipFrom", d.shipFrom)
-            c.optTimestamp(p + ".MovementEndTime", d.movementEndTime)
-            c.optTimestamp(p + ".MovementStartTime", d.movementStartTime)
-            if (d.lines.size == 0) c.error("required", p + ".Line", "needs at least one line")
-            for (l in d.lines) c.line(p, l, LINE_INVOICE, products)
-            c.totals(p + ".DocumentTotals", d.totals)
-            if (d.totals.settlementAmount != null) c.error("not_allowed", p + ".DocumentTotals", "SettlementAmount belongs to receipts")
-            c.withholding(p, d.withholding)
-            if (d.invoiceType == "NC")
-                for (l in d.lines) if (l.creditAmount != null) c.warning("portaria", p, "a credit note's lines normally go to DebitAmount")
-        }
+        val seen = saftDocumentNumbers()
+        for (d in sales.invoices) c.invoice(d, seen, customers, products)
     }
 
     val goods = file.movementOfGoods
@@ -630,33 +838,8 @@ fun saftCheck(file: SaftFile): array<SaftIssue> {
         val fresh = saftMovementOfGoods(goods.movements)
         c.count("MovementOfGoods.NumberOfMovementLines", goods.numberOfMovementLines, fresh.numberOfMovementLines)
         c.control("MovementOfGoods.TotalQuantityIssued", goods.totalQuantityIssued, fresh.totalQuantityIssued)
-        val seen = TextSet()
-        for (d in goods.movements) {
-            val p = "StockMovement[${d.documentNumber}]"
-            c.documentNumber(p, "DocumentNumber", d.documentNumber, seen)
-            c.atcud(p, d.atcud, d.documentNumber)
-            c.status(p + ".DocumentStatus", d.status, "N T A F R")
-            c.signature(p, d.hash, d.hashControl)
-            c.date(p + ".MovementDate", d.movementDate)
-            c.oneOf(p + ".MovementType", d.movementType, "GR GT GA GC GD")
-            c.text(p + ".SourceID", d.sourceId, 1, 30)
-            c.timestamp(p + ".SystemEntryDate", d.systemEntryDate)
-            c.eac(p, d.eacCode)
-            c.transaction(p, d.transactionId)
-            c.period(p + ".Period", d.period)
-            if ((d.customerId == "") == (d.supplierId == "")) c.error("choice", p, "needs exactly one of CustomerID and SupplierID")
-            if (d.customerId != "" && !customers.has(d.customerId)) c.error("unknown_customer", p + ".CustomerID", "\"${d.customerId}\" isn't in the Customer table")
-            if (d.supplierId != "" && !suppliers.has(d.supplierId)) c.error("unknown_supplier", p + ".SupplierID", "\"${d.supplierId}\" isn't in the Supplier table")
-            c.optText(p + ".MovementComments", d.movementComments, 60)
-            c.shippingPoint(p + ".ShipTo", d.shipTo)
-            c.shippingPoint(p + ".ShipFrom", d.shipFrom)
-            c.optTimestamp(p + ".MovementEndTime", d.movementEndTime)
-            c.timestamp(p + ".MovementStartTime", d.movementStartTime)
-            c.optText(p + ".ATDocCodeID", d.atDocCodeId, 200)
-            if (d.lines.size == 0) c.error("required", p + ".Line", "needs at least one line")
-            for (l in d.lines) c.line(p, l, LINE_MOVEMENT, products)
-            c.totals(p + ".DocumentTotals", d.totals)
-        }
+        val seen = saftDocumentNumbers()
+        for (d in goods.movements) c.movement(d, seen, customers, suppliers, products)
     }
 
     val work = file.workingDocuments
@@ -665,20 +848,8 @@ fun saftCheck(file: SaftFile): array<SaftIssue> {
         c.count("WorkingDocuments.NumberOfEntries", work.numberOfEntries, fresh.numberOfEntries)
         c.control("WorkingDocuments.TotalDebit", work.totalDebit, fresh.totalDebit)
         c.control("WorkingDocuments.TotalCredit", work.totalCredit, fresh.totalCredit)
-        val seen = TextSet()
-        for (d in work.documents) {
-            val p = "WorkDocument[${d.documentNumber}]"
-            c.documentNumber(p, "DocumentNumber", d.documentNumber, seen)
-            c.atcud(p, d.atcud, d.documentNumber)
-            c.status(p + ".DocumentStatus", d.status, "N A F")
-            c.signature(p, d.hash, d.hashControl)
-            c.date(p + ".WorkDate", d.workDate)
-            c.oneOf(p + ".WorkType", d.workType, "CM CC FC FO NE OU OR PF DC RP RE CS LD RA")
-            c.common(p, d.sourceId, d.systemEntryDate, d.customerId, customers, d.eacCode, d.transactionId, d.period)
-            if (d.lines.size == 0) c.error("required", p + ".Line", "needs at least one line")
-            for (l in d.lines) c.line(p, l, LINE_WORK, products)
-            c.totals(p + ".DocumentTotals", d.totals)
-        }
+        val seen = saftDocumentNumbers()
+        for (d in work.documents) c.workDocument(d, seen, customers, products)
     }
 
     val receipts = file.payments
@@ -687,43 +858,92 @@ fun saftCheck(file: SaftFile): array<SaftIssue> {
         c.count("Payments.NumberOfEntries", receipts.numberOfEntries, fresh.numberOfEntries)
         c.control("Payments.TotalDebit", receipts.totalDebit, fresh.totalDebit)
         c.control("Payments.TotalCredit", receipts.totalCredit, fresh.totalCredit)
-        val seen = TextSet()
-        for (d in receipts.payments) {
-            val p = "Payment[${d.paymentRefNo}]"
-            c.documentNumber(p, "PaymentRefNo", d.paymentRefNo, seen)
-            c.atcud(p, d.atcud, d.paymentRefNo)
-            c.transaction(p, d.transactionId)
-            c.period(p + ".Period", d.period)
-            c.date(p + ".TransactionDate", d.transactionDate)
-            c.oneOf(p + ".PaymentType", d.paymentType, "RC RG")
-            c.optText(p + ".Description", d.description, 200)
-            c.optText(p + ".SystemID", d.systemId, 60)
-            c.status(p + ".DocumentStatus", d.status, "N A")
-            for (m in d.methods) c.method(p + ".PaymentMethod", m)
-            c.common(p, d.sourceId, d.systemEntryDate, d.customerId, customers, "", "", 0)
-            if (d.lines.size == 0) c.error("required", p + ".Line", "needs at least one line")
-            for (l in d.lines) {
-                val q = "$p.Line[${l.lineNumber}]"
-                if (l.lineNumber < 0) c.error("negative", q, "LineNumber is negative")
-                if (l.sourceDocuments.size == 0) c.error("required", q + ".SourceDocumentID", "needs at least one")
-                for (s in l.sourceDocuments) {
-                    c.text(q + ".OriginatingON", s.originatingOn, 1, 60)
-                    c.date(q + ".InvoiceDate", s.invoiceDate)
-                    c.optText(q + ".Description", s.description, 200)
-                }
-                c.optAmount(q + ".SettlementAmount", l.settlementAmount)
-                if ((l.debitAmount == null) == (l.creditAmount == null)) c.error("choice", q, "needs exactly one of DebitAmount and CreditAmount")
-                c.optAmount(q + ".DebitAmount", l.debitAmount)
-                c.optAmount(q + ".CreditAmount", l.creditAmount)
-                c.tax(q, l.tax, LINE_WORK)
-                c.exemption(q, l.tax, l.taxExemptionReason, l.taxExemptionCode)
-                if (d.paymentType == "RC" && l.tax == null) c.error("assert", q + ".Tax", "a cash-VAT receipt (RC) needs Tax on every line")
-            }
-            c.totals(p + ".DocumentTotals", d.totals)
-            c.withholding(p, d.withholding)
-        }
+        val seen = saftDocumentNumbers()
+        for (d in receipts.payments) c.payment(d, seen, customers)
     }
     val out: array<SaftIssue> = []
     for (issue in c.issues) out.append(issue)
     out
 }
+
+// saftCheck a document at a time, for a file that isn't in memory: the header and master
+// files when it is made, then each section's documents as they pass, and the control
+// totals a section declares compared with the documents at its end. It holds the master
+// files' keys, the numbers already seen (SaftDocumentNumbers), and a section's sums.
+class SaftStreamCheck(
+    val c: SaftChecker,
+    var customers: TextSet,
+    var suppliers: TextSet,
+    var products: TextSet,
+    val maxNumbers: int,
+    var seen: SaftDocumentNumbers,
+    var tally: SaftTally
+) {
+    // A reader only knows them once it has read them.
+    fun begin(header: SaftHeader, masterFiles: SaftMasterFiles): void {
+        c.header(header)
+        c.masterFiles(masterFiles)
+        customers = customerSet(masterFiles)
+        suppliers = supplierSet(masterFiles)
+        products = productSet(masterFiles)
+        return
+    }
+
+    fun startSection(): void {
+        seen = saftDocumentNumbers(maxNumbers)
+        tally = SaftTally()
+        return
+    }
+
+    fun invoice(d: SaftInvoice): void {
+        c.invoice(d, seen, customers, products)
+        tally.invoice(d)
+        return
+    }
+
+    fun movement(d: SaftStockMovement): void {
+        c.movement(d, seen, customers, suppliers, products)
+        tally.movement(d)
+        return
+    }
+
+    fun workDocument(d: SaftWorkDocument): void {
+        c.workDocument(d, seen, customers, products)
+        tally.workDocument(d)
+        return
+    }
+
+    fun payment(d: SaftPayment): void {
+        c.payment(d, seen, customers)
+        tally.payment(d)
+        return
+    }
+
+    fun endDebitCredit(section: string, entries: int, debit: SaftDecimal, credit: SaftDecimal): void {
+        c.count(section + ".NumberOfEntries", entries, tally.entries)
+        c.control(section + ".TotalDebit", debit, tally.debit)
+        c.control(section + ".TotalCredit", credit, tally.credit)
+        return
+    }
+
+    fun endMovements(lines: int, quantity: SaftDecimal): void {
+        c.count("MovementOfGoods.NumberOfMovementLines", lines, tally.entries)
+        c.control("MovementOfGoods.TotalQuantityIssued", quantity, tally.quantity)
+        return
+    }
+
+    fun issues(): array<SaftIssue> {
+        val out: array<SaftIssue> = []
+        for (issue in c.issues) out.append(issue)
+        out
+    }
+}
+
+fun saftStreamCheck(header: SaftHeader, masterFiles: SaftMasterFiles, maxIssues: int = 1000, maxNumbers: int = 1048576): SaftStreamCheck {
+    val check = saftBlankCheck(maxIssues, maxNumbers)
+    check.begin(header, masterFiles)
+    check
+}
+
+fun saftBlankCheck(maxIssues: int = 1000, maxNumbers: int = 1048576): SaftStreamCheck =
+    SaftStreamCheck(SaftChecker(array<SaftIssue>(), maxIssues), TextSet(), TextSet(), TextSet(), maxNumbers, saftDocumentNumbers(maxNumbers), SaftTally())

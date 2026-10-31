@@ -1,0 +1,429 @@
+// The streaming writer gives saftWrite's bytes on every golden and generated file, and the
+// streaming reader finds what saftRead, saftCheck and saftVerifyChains find. A wrong total
+// fails the write, and memory stays within its limits.
+import "../src/saft.ab"
+import github("AndreBaltazar8/abla-xml")
+import "support/samples.ab"
+import "support/streaming.ab"
+import "abla/bytes"
+import "abla/fs"
+import "abla/memory"
+import "abla/process"
+import "abla/test"
+import "abla/text"
+
+fun streamed(file: SaftFile, options: SaftWriteOptions = SaftWriteOptions()): string {
+    val sink = Collect(byteBuffer())
+    val w = saftStreamWriter(file.header, file.masterFiles, sink, options)
+    streamFile(file, w)
+    val result = w.finish()
+    if (!result.succeeded) return "failed: ${result.errorMessage}"
+    expectEqual(sink.closes, 1, "the sink is closed")
+    expectEqual(result.bytesWritten, sink.parts.size(), "bytes written")
+    sink.parts.toText()
+}
+
+fun sorted(items: array<string>): array<string> {
+    val out: array<string> = []
+    for (item in items) {
+        out.append(item)
+        var i = out.size - 1
+        while (i > 0 && out[i - 1] > out[i]) {
+            val moved = out[i - 1]
+            out[i - 1] = out[i]
+            out[i] = moved
+            i = i - 1
+        }
+    }
+    out
+}
+
+fun issueTexts(issues: array<SaftIssue>): array<string> {
+    val out: array<string> = []
+    for (i in issues) out.append("${i.severity} ${i.code} ${i.path} ${i.message}")
+    sorted(out)
+}
+
+fun chainTexts(report: SaftChainReport): string {
+    val out: array<string> = []
+    for (p in report.problems) out.append("${p.code} ${p.document} ${p.message}")
+    "${report.verified} ${report.unsigned} ${report.integrated} ${report.unverifiable}: ${textJoin(sorted(out), "; ")}"
+}
+
+// Reads to the end, and gives the report.
+fun readAll(source: string, options: SaftStreamReadOptions = SaftStreamReadOptions()): SaftStreamReport {
+    val r = saftStreamReader(xmlStringSource(source, 4096), options)
+    while (true) {
+        val kind = r.next()
+        if (kind == saftReadEnd || kind == saftReadError) break
+    }
+    r.report()
+}
+
+// The streaming reader's verdict on a text must be saftRead's, saftCheck's and saftVerifyChains'.
+fun agree(text: string, label: string, key: SaftRsaPublicKey? = null): void {
+    val whole = saftRead(text)
+    val file = whole.file
+    if (!expect(file != null, "$label reads: ${whole.error}") || file == null) return
+    val expected: array<SaftIssue> = []
+    for (i in whole.issues) expected.append(i)
+    for (i in saftCheck(file)) expected.append(i)
+    val report = readAll(text, SaftStreamReadOptions(key = key))
+    expectEqual(report.error, "", "$label: the stream reads")
+    expectEqual(textJoin(issueTexts(report.issues), "\n"), textJoin(issueTexts(expected), "\n"), "$label: the same issues")
+    expectEqual(chainTexts(report.chains), chainTexts(saftVerifyChains(file, key)), "$label: the same chain report")
+    expectEqual(textJoin(report.skippedTables, " "), textJoin(file.skippedTables, " "), "$label: the same skipped tables")
+    return
+}
+
+fun refused(var w: SaftStreamWriter, code: string, label: string): void {
+    val r = w.finish()
+    expect(!r.succeeded, "$label is refused")
+    var found = code == ""
+    for (i in r.issues) if (i.code == code) found = true
+    expect(found, "$label reports $code: ${r.errorMessage}")
+    return
+}
+
+fun writerFor(sink: XmlSink): SaftStreamWriter = saftStreamWriter(sampleHeader(), sampleMaster(), sink)
+
+class InvoicePages(val count: int, var at: int = 0, var pages: int = 0) : SaftInvoices {
+    fun next(): SaftInvoice? {
+        if (at >= count) return null
+        if (at % 2 == 0) pages = pages + 1
+        at = at + 1
+        invoiceOf("FT", "A", at, "C1", stdLines())
+    }
+}
+
+// A long file made up as it is read, so it never exists whole.
+class Repeating(val head: string, val body: string, var left: int, val tail: string, var state: int = 0) : XmlSource {
+    fun read(maximum: int): string {
+        if (state == 0) {
+            state = 1
+            return head
+        }
+        if (left > 0) {
+            left = left - 1
+            return body
+        }
+        if (state == 1) {
+            state = 2
+            return tail
+        }
+        ""
+    }
+}
+
+fun fileHead(): string {
+    val text = saftWrite(fileWith(sales = saftSalesInvoices(array<SaftInvoice>()))).text
+    text.slice(0, text.indexOf("<SalesInvoices>"))
+}
+
+fun main: int {
+    // Byte for byte, on every golden file and all the generated ones.
+    for (g in goldenFiles()) {
+        val whole = saftWrite(g.file)
+        expect(whole.succeeded, g.name + " writes")
+        val golden = path("tests/golden/" + g.name + ".xml").readText()
+        expect(streamed(g.file) == golden, g.name + ": the stream gives its golden file")
+        agree(golden, g.name)
+    }
+    for (seed in 1 until 201) {
+        val file = generatedFile(seed, FakeSigner())
+        val whole = saftWrite(file)
+        expect(streamed(file) == whole.text, "seed $seed: the stream gives saftWrite's bytes")
+        agree(whole.text, "seed $seed")
+        val sink = Collect(byteBuffer())
+        val copied = copyEvents(saftStreamReader(xmlStringSource(whole.text, 1 + seed % 977)), sink)
+        expect(copied != null && copied.succeeded, "seed $seed: read and written by streams")
+        expect(sink.parts.toText() == whole.text, "seed $seed: the copy has the same bytes")
+    }
+    val utf8 = SaftWriteOptions(encoding = "UTF-8", indent = "")
+    val anotherFile = generatedFile(7, FakeSigner())
+    expect(streamed(anotherFile, utf8) == saftWrite(anotherFile, utf8).text, "other options, the same bytes")
+    expect(streamed(fileWith()) == saftWrite(fileWith()).text, "no source documents at all")
+    expect(streamed(fileWith(sales = saftSalesInvoices(array<SaftInvoice>()))) == saftWrite(fileWith(sales = saftSalesInvoices(array<SaftInvoice>()))).text, "an empty section")
+
+    // An iterator, as paging a database would be.
+    val ok = stdLines()
+    val docs = [invoiceOf("FT", "A", 1, "C1", ok), invoiceOf("FT", "A", 2, "C1", ok), invoiceOf("FT", "A", 3, "C1", ok)]
+    val expectedTotals = saftSalesInvoices(docs)
+    val paged = Collect(byteBuffer())
+    val pager = writerFor(paged)
+    val pages = InvoicePages(docs.size)
+    pager.salesInvoices(expectedTotals.numberOfEntries, expectedTotals.totalDebit, expectedTotals.totalCredit, pages)
+    expect(pager.finish().succeeded, "an iterator writes")
+    expect(paged.parts.toText() == saftWrite(fileWith(sales = expectedTotals)).text, "an iterator gives the same bytes")
+    expectEqual(pages.pages, 2, "and was asked page by page")
+
+    // Control totals are the caller's word until the documents have passed.
+    val z = saftDecimalZero()
+    val wrongCount = writerFor(Collect(byteBuffer()))
+    wrongCount.startSalesInvoices(2, expectedTotals.totalDebit, expectedTotals.totalCredit)
+    for (d in docs) wrongCount.invoice(d)
+    wrongCount.endSection()
+    refused(wrongCount, "control_total", "a wrong NumberOfEntries")
+    val wrongCredit = writerFor(Collect(byteBuffer()))
+    wrongCredit.startSalesInvoices(3, z, dec("1.00"))
+    for (d in docs) wrongCredit.invoice(d)
+    wrongCredit.endSection()
+    refused(wrongCredit, "control_total", "a wrong TotalCredit")
+    val wrongDebit = writerFor(Collect(byteBuffer()))
+    wrongDebit.startSalesInvoices(3, dec("1.00"), expectedTotals.totalCredit)
+    for (d in docs) wrongDebit.invoice(d)
+    wrongDebit.endSection()
+    refused(wrongDebit, "control_total", "a wrong TotalDebit")
+    val movements = [movementOf("GT", 1, stdMovementLines())]
+    val wrongLines = writerFor(Collect(byteBuffer()))
+    wrongLines.startMovementOfGoods(99, saftMovementOfGoods(movements).totalQuantityIssued)
+    wrongLines.movement(movements[0])
+    wrongLines.endSection()
+    refused(wrongLines, "control_total", "wrong movement lines")
+    val wrongQuantity = writerFor(Collect(byteBuffer()))
+    wrongQuantity.startMovementOfGoods(saftMovementOfGoods(movements).numberOfMovementLines, dec("99"))
+    wrongQuantity.movement(movements[0])
+    wrongQuantity.endSection()
+    refused(wrongQuantity, "control_total", "a wrong quantity")
+    val works = [workOf("PF", 1, ok)]
+    val wrongWork = writerFor(Collect(byteBuffer()))
+    wrongWork.startWorkingDocuments(1, z, z)
+    wrongWork.workDocument(works[0])
+    wrongWork.endSection()
+    refused(wrongWork, "control_total", "wrong working document totals")
+    val receipts = [paymentOf("RG", 1, "10.00")]
+    val wrongPayment = writerFor(Collect(byteBuffer()))
+    wrongPayment.startPayments(1, z, z)
+    wrongPayment.payment(receipts[0])
+    wrongPayment.endSection()
+    refused(wrongPayment, "control_total", "wrong payment totals")
+    // AT's demonstration file writes 3295.92 for 3295.922006: declaring the rounding is fine.
+    val fine = [invoiceOf("FT", "A", 1, "C1", [saleLine(1, "1.5", "3.3333", vat("PT", "NOR", "23"))])]
+    val rounded = writerFor(Collect(byteBuffer()))
+    rounded.startSalesInvoices(1, z, dec("5.00"))
+    rounded.invoice(fine[0])
+    rounded.endSection()
+    expect(rounded.finish().succeeded, "a rounded total is accepted, as saftCheck does")
+
+    // A document the check refuses stops the write there: nothing of it reaches the sink.
+    val collected = Collect(byteBuffer())
+    val stopping = writerFor(collected)
+    stopping.startSalesInvoices(3, z, z)
+    stopping.invoice(docs[0])
+    stopping.invoice(invoiceOf("FT", "A", 2, "NOPE", ok))
+    stopping.invoice(docs[2])
+    stopping.endSection()
+    refused(stopping, "unknown_customer", "an unknown customer")
+    expect(!collected.parts.toText().contains("FT A/3"), "nothing after it is written")
+    expectEqual(collected.closes, 1, "and the sink is closed")
+    val repeated = writerFor(Collect(byteBuffer()))
+    repeated.startSalesInvoices(2, z, z)
+    repeated.invoice(docs[0])
+    repeated.invoice(docs[0])
+    refused(repeated, "duplicate", "a repeated number")
+    val badHeader = saftStreamWriter(SaftHeader("", "12", "", sampleAddress(), 1, "", "", "", "", "", ""), sampleMaster(), Collect(byteBuffer()))
+    refused(badHeader, "too_short", "a bad header")
+    refused(saftStreamWriter(sampleHeader(), SaftMasterFiles(sampleCustomers(), sampleSuppliers(), [SaftProduct("Z", "P1", "Pão", "1")], array<SaftTaxEntry>()), Collect(byteBuffer())), "not_allowed", "bad master files")
+    val notChecked = Collect(byteBuffer())
+    val unchecked = saftStreamWriter(sampleHeader(), sampleMaster(), notChecked, SaftWriteOptions(unchecked = true))
+    unchecked.startSalesInvoices(9, z, z)
+    unchecked.invoice(invoiceOf("FT", "A", 1, "NOPE", ok))
+    unchecked.endSection()
+    expect(unchecked.finish().succeeded, "unchecked writes what it is given")
+    expect(notChecked.parts.toText().contains("NOPE"), "it does")
+
+    // Misuse.
+    val stray = writerFor(Collect(byteBuffer()))
+    stray.invoice(docs[0])
+    refused(stray, "", "a document with no section")
+    val mixed = writerFor(Collect(byteBuffer()))
+    mixed.startSalesInvoices(1, z, z)
+    mixed.movement(movements[0])
+    refused(mixed, "", "a document of another section")
+    val backwards = writerFor(Collect(byteBuffer()))
+    backwards.startPayments(0, z, z)
+    backwards.endSection()
+    backwards.startSalesInvoices(0, z, z)
+    refused(backwards, "", "sections out of order")
+    val twice = writerFor(Collect(byteBuffer()))
+    twice.startSalesInvoices(0, z, z)
+    twice.endSection()
+    twice.startSalesInvoices(0, z, z)
+    refused(twice, "", "a section twice")
+    val notEnded = writerFor(Collect(byteBuffer()))
+    notEnded.startSalesInvoices(0, z, z)
+    refused(notEnded, "", "a section left open")
+    val noSection = writerFor(Collect(byteBuffer()))
+    noSection.endSection()
+    refused(noSection, "", "ending no section")
+    refused(saftStreamWriter(sampleHeader(), sampleMaster(), xmlCallbackSink({ b: string -> false })), "", "a sink that refuses")
+
+    // Document numbers: exact, and small when in sequence.
+    val numbers = saftDocumentNumbers()
+    expect(numbers.add("FT A/1"), "first")
+    expect(!numbers.add("FT A/1"), "repeat")
+    expect(numbers.add("FT A/3"), "a gap")
+    expect(numbers.add("FT A/2"), "filling the gap")
+    expect(!numbers.add("FT A/2"), "repeat in a filled gap")
+    expect(!numbers.add("FT A/3"), "repeat after it")
+    expect(numbers.add("FT B/1"), "another series")
+    expect(numbers.add("FT A/01"), "another text for the number 1 isn't the same number, as for the XSD's key")
+    expect(!numbers.add("FT A/01"), "and repeats")
+    expect(numbers.add("FT A/100000000000000000000"), "too long for an integer")
+    expect(!numbers.add("FT A/100000000000000000000"), "and repeats")
+    expect(numbers.add("nonsense"), "not a number")
+    expect(!numbers.add("nonsense"), "and repeats")
+    val sequential = saftDocumentNumbers()
+    for (n in 1 until 100001) expect(sequential.add("FT A/$n"), "in sequence")
+    expectEqual(sequential.kept, 2, "a series in sequence holds its name and one range")
+    val reversed = saftDocumentNumbers()
+    var n = 1000
+    while (n > 0) {
+        expect(reversed.add("FT A/$n"), "backwards")
+        n = n - 1
+    }
+    expectEqual(reversed.kept, 2, "backwards too")
+    val scattered = saftDocumentNumbers(3)
+    for (m in [1, 3, 5, 7, 9]) scattered.add("FT A/" + "$m")
+    expect(scattered.overflowed, "past the limit it says so")
+    val overflowing = saftStreamWriter(sampleHeader(), sampleMaster(), Collect(byteBuffer()), maxNumbers = 2)
+    overflowing.startSalesInvoices(4, z, z)
+    for (m in [1, 3, 5, 7]) overflowing.invoice(invoiceOf("FT", "A", m, "C1", ok))
+    refused(overflowing, "too_many_numbers", "numbers past the limit, as they can't be checked")
+
+    // Issues stay within their limit, and errors stay among them.
+    val noisy: array<SaftInvoice> = []
+    for (m in 1 until 41) {
+        val d = invoiceOf("FT", "A", m, "C1", ok)
+        d.atcud = "0"
+        noisy.append(d)
+    }
+    val quiet = saftStreamWriter(sampleHeader(), sampleMaster(), Collect(byteBuffer()), maxIssues = 5)
+    val noisyTotals = saftSalesInvoices(noisy)
+    quiet.startSalesInvoices(noisyTotals.numberOfEntries, noisyTotals.totalDebit, noisyTotals.totalCredit)
+    for (d in noisy) quiet.invoice(d)
+    quiet.endSection()
+    val quietResult = quiet.finish()
+    expect(quietResult.succeeded, "warnings don't stop it")
+    expectEqual(quietResult.issues.size, 5, "only five kept")
+    expectEqual(quietResult.issuesDropped, 35, "the rest counted")
+    val noisyText = saftWrite(fileWith(sales = saftSalesInvoices(noisy))).text
+    val small = readAll(noisyText, SaftStreamReadOptions(maxIssues = 5))
+    expectEqual(small.issues.size, 5, "the reader too")
+    expectEqual(small.warnings, 40, "and it counts them")
+
+    // What the reader refuses or reports, compared with saftRead on the same text.
+    val good = saftWrite(generatedFile(3, FakeSigner())).text
+    expect(readAll(good).succeeded, "a good file succeeds")
+    for (broken in [
+        good.replace("<TotalCredit>", "<TotalCredit>1"),
+        good.replace("<NumberOfEntries>", "<NumberOfEntries>1"),
+        good.replace("<TotalQuantityIssued>", "<TotalQuantityIssued>9"),
+        good.slice(0, good.indexOf("<SourceDocuments>")) + good.slice(good.indexOf("<SourceDocuments>"), good.size).replace("<CustomerID>C1</CustomerID>", "<CustomerID>C9</CustomerID>"),
+        good.replace("<HashControl>1</HashControl>", "<HashControl>x</HashControl>"),
+        good.replace("<UnitOfMeasure>", "<Bogus>x</Bogus><UnitOfMeasure>"),
+        good.replace("<TotalDebit>", "<Other>1</Other><TotalDebit>"),
+        good.replace("<GrossTotal>", "<GrossTotal>x"),
+        good.replace("<Header>", "<Extra/><Header>"),
+        good.replace("<SalesInvoices>", "<Mystery/><SalesInvoices>")
+    ]) {
+        val whole = saftRead(broken)
+        val file = whole.file
+        if (file != null) {
+            val expected: array<SaftIssue> = []
+            for (i in whole.issues) expected.append(i)
+            for (i in saftCheck(file)) expected.append(i)
+            val at = broken.size - good.size
+            expect(saftHasErrors(expected), "a broken file has errors: size difference $at")
+            expect(!readAll(broken).succeeded, "the stream finds them too: size difference $at")
+        }
+    }
+    for (bad in [
+        ["", "not XML"], ["<a/>", "isn't AuditFile"], ["<AuditFile/>", "the namespace"],
+        ["<AuditFile xmlns=\"$saftNamespace\"/>", "is missing"],
+        ["<AuditFile xmlns=\"$saftNamespace\"><SourceDocuments/></AuditFile>", "is missing"],
+        ["<AuditFile xmlns=\"$saftNamespace\"><Header><AuditFileVersion>1.03</AuditFileVersion></Header></AuditFile>", "the version"],
+        [good.slice(0, good.size / 2), "not XML"],
+        [good.slice(0, good.indexOf("<SourceDocuments>")) + "<!DOCTYPE x>", "not XML"]
+    ]) {
+        val report = readAll(bad[0])
+        expect(report.error.contains(bad[1]), "\"${bad[0].slice(0, if (bad[0].size < 30) bad[0].size else 30)}\" is refused for ${bad[1]}: ${report.error}")
+        expect(!report.succeeded, "it doesn't succeed")
+    }
+    expect(readAll("<?xml version=\"1.0\"?><!DOCTYPE AuditFile><AuditFile/>").error.contains("dtd_forbidden"), "a DTD is refused")
+    expect(readAll(good, SaftStreamReadOptions(maxBytes = 100)).error.contains("too_large"), "maxBytes holds")
+    expect(readAll(good, SaftStreamReadOptions(maxDocumentBytes = 100)).error.contains("larger than"), "maxDocumentBytes holds")
+    expect(readAll(good, SaftStreamReadOptions(maxDocumentNodes = 4)).error.contains("larger than"), "maxDocumentNodes holds")
+    expect(readAll(good, SaftStreamReadOptions(maxMasterBytes = 100)).error.contains("larger than"), "maxMasterBytes holds")
+    expect(readAll(good, SaftStreamReadOptions(maxMasterNodes = 4)).error.contains("larger than"), "maxMasterNodes holds")
+    expect(readAll(good, SaftStreamReadOptions(maxNumbers = 0)).errors > 0, "maxNumbers holds")
+    expect(readAll(good, SaftStreamReadOptions(maxSeries = 1)).chains.problems.size > 0, "maxSeries holds")
+    expectEqual(readAll(good, SaftStreamReadOptions(check = false)).errors, 0, "a read without the check")
+    expectEqual(readAll(good, SaftStreamReadOptions(chains = false)).chains.problems.size, 0, "a read without chains")
+    // Tables this doesn't model are named and not held.
+    val accounting = good.replace("<Customer>", "<GeneralLedgerAccounts><Account/></GeneralLedgerAccounts><Customer>").replace("<SourceDocuments>", "<GeneralLedgerEntries><Journal/></GeneralLedgerEntries><SourceDocuments>")
+    agree(accounting, "accounting tables")
+
+    // Chains: the stream finds what saftVerifyChains finds. A file out of order is what it can't.
+    val keyDir = "build/stream-keys"
+    path(keyDir).createDirectories()
+    expectEqual(command("openssl").argument("genrsa").argument("-out").argument(keyDir + "/key.pem").argument("1024").run(), 0, "openssl made a key")
+    command("openssl").argument("rsa").argument("-in").argument(keyDir + "/key.pem").argument("-pubout").argument("-out").argument(keyDir + "/pub.pem").run()
+    val signer = saftRsaSignerFromPem(path(keyDir + "/key.pem").readText(), 1).signer
+    val key = saftRsaPublicKeyFromPem(path(keyDir + "/pub.pem").readText())
+    path(keyDir).removeTree()
+    expect(!path(keyDir).exists(), "no key is left")
+    if (signer != null) {
+        val signed = saftWrite(generatedFile(11, signer)).text
+        agree(signed, "signed", key)
+        val checked = readAll(signed, SaftStreamReadOptions(key = key))
+        expect(checked.chains.ok(), "signatures verify as they pass")
+        expect(checked.chains.verified > 0, "some were verified: ${checked.chains.verified}")
+        // A changed amount, a dropped document and a repeated one.
+        agree(signed.replace("<GrossTotal>", "<GrossTotal>1"), "changed", key)
+        val at = signed.indexOf("<Invoice>")
+        val next = signed.indexOf("<Invoice>", at + 1)
+        agree(signed.slice(0, at) + signed.slice(next, signed.size), "the first document removed", key)
+        val after = signed.indexOf("<Invoice>", next + 1)
+        agree(signed.slice(0, next) + signed.slice(after, signed.size), "a document removed", key)
+        val moved = signed.slice(0, at) + signed.slice(next, after) + signed.slice(at, next) + signed.slice(after, signed.size)
+        val swapped = readAll(moved, SaftStreamReadOptions(key = key))
+        var outOfOrder = false
+        for (p in swapped.chains.problems) if (p.code == "out_of_order") outOfOrder = true
+        expect(outOfOrder, "documents out of order are reported, not sorted")
+    }
+
+    // Memory: a reader holds a document, not the file, over a good deal more than the limit
+    // of what a test should load; and hostile files stop at their limits.
+    memorySetCollectionGrowth(8388608)
+    val head = fileHead()
+    val text = saftWrite(fileWith(sales = saftSalesInvoices([invoiceOf("FT", "A", 1, "C1", ok)]))).text
+    val docStart = text.indexOf("<Invoice>")
+    val docEnd = text.indexOf("</Invoice>") + 10
+    val oneDoc = text.slice(docStart, docEnd)
+    val roof = 96 * 1048576
+    for (hostile in [
+        ["a document that never ends", head + "<SalesInvoices><NumberOfEntries>0</NumberOfEntries><TotalDebit>0</TotalDebit><TotalCredit>0</TotalCredit><Invoice>", "<Line><ProductCode>P1</ProductCode></Line>"],
+        ["master files that never end", head.slice(0, head.indexOf("<Customer>")), "<Customer><CustomerID>X</CustomerID></Customer>"],
+        ["fields of a section that never end", head + "<SalesInvoices>", "<Other>x</Other>"],
+        ["one long text", head + "<SalesInvoices><NumberOfEntries>", "x"],
+        ["unknown elements that never end", head.slice(0, head.indexOf("<Header>")) + "<Mystery>", "<x>y</x>"]
+    ]) {
+        val before = memoryLiveBytes()
+        val r = saftStreamReader(Repeating(hostile[1], hostile[2].repeat(4096), if (hostile[2].size == 1) 20000 else 2000, ""), SaftStreamReadOptions(maxDocumentBytes = 4194304, maxDocumentNodes = 65536, maxMasterBytes = 4194304, maxMasterNodes = 65536))
+        var peak = 0
+        var steps = 0
+        while (steps < 200000) {
+            val kind = r.next()
+            if (kind == saftReadEnd || kind == saftReadError) break
+            steps = steps + 1
+            val live = memoryLiveBytes()
+            if (live > peak) peak = live
+        }
+        val live = memoryLiveBytes()
+        if (live > peak) peak = live
+        expect(r.error != "", "${hostile[0]} stops: ${r.error}")
+        expect(peak - before < roof, "${hostile[0]} stays bounded: ${peak - before} bytes")
+    }
+    testsPassed()
+}

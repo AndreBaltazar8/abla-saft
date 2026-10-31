@@ -3,6 +3,9 @@
 // a read problem, or a chain problem. Its signatures can't be verified: AT's demonstration
 // key isn't published.
 import "../src/saft.ab"
+import "../tests/support/streaming.ab"
+import github("AndreBaltazar8/abla-xml")
+import "abla/bytes"
 import "abla/fs"
 import "abla/io"
 import "abla/process"
@@ -43,6 +46,29 @@ fun main: int {
         return 1
     }
     path(processArgument(1)).writeText(written.text)
+    // The streams: the same bytes out, the same verdict in, and the same bytes from a copy.
+    val sink = Collect(byteBuffer())
+    val stream = saftStreamWriter(file.header, file.masterFiles, sink)
+    streamFile(file, stream)
+    if (!stream.finish().succeeded || sink.parts.toText() != written.text) {
+        eprintln("stream writer: not saftWrite's bytes")
+        bad = bad + 1
+    }
+    val reader = saftStreamReader(xmlStringSource(source))
+    var kind = 0
+    while (kind != saftReadEnd && kind != saftReadError) kind = reader.next()
+    val report = reader.report()
+    if (!report.succeeded || !report.chains.ok() || report.warnings != warnings) {
+        eprintln("stream reader: ${report.error}, ${report.errors} errors, ${report.warnings} warnings against $warnings, ${report.chains.problems.size} chain problems")
+        bad = bad + 1
+    }
+    val copy = Collect(byteBuffer())
+    val copied = copyEvents(saftStreamReader(xmlStringSource(source)), copy)
+    if (copied == null || !copied.succeeded || copy.parts.toText() != written.text) {
+        eprintln("stream copy: not saftWrite's bytes")
+        bad = bad + 1
+    }
+    println("streams: ${report.documents} documents, the same bytes and verdict as saftWrite and saftRead")
     if (bad > 0) return 1
     0
 }

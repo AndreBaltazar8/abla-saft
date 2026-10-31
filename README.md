@@ -66,6 +66,89 @@ refuses those. A `warning` is what the Portaria asks and the XSD can't see.
 number or a missing field is an issue, not a silent loss. It refuses a DTD and reads no
 external entity. Reading isn't checking: follow it with `saftCheck` and `saftVerifyChains`.
 
+## Files too big for memory
+
+`saftWrite` and `saftRead` hold the whole file. The streaming forms hold a document at a time.
+
+### Writing
+
+`saftStreamWriter(header, masterFiles, sink, options)` writes the header and master files at
+once and each document as it is given, to an `XmlSink` from
+[abla-xml](https://github.com/AndreBaltazar8/abla-xml) (`saftFileSink(path)` for a file). The
+bytes are those of `saftWrite` for the same data.
+
+SAF-T has its control totals before its documents, so they are given first, from SQL for
+instance, and compared with the documents as they pass. A total that disagrees fails the write
+at the end of its section.
+
+```abla
+val w = saftStreamWriter(header, masterFiles, saftFileSink(path("saft.xml")))
+w.startSalesInvoices(numberOfEntries, totalDebit, totalCredit)   // SELECT count, sum, sum
+while (true) {
+    val page = nextPage()
+    if (page.size == 0) break
+    for (d in page) w.invoice(d)
+}
+w.endSection()
+val r = w.finish()   // r.succeeded, r.errorMessage, r.issues, r.issuesDropped, r.documents, r.bytesWritten
+if (!r.succeeded) path("saft.xml").remove()
+```
+
+- Sections are `startSalesInvoices`, `startMovementOfGoods(lines, quantity)`, `startWorkingDocuments`
+  and `startPayments`, in that order, each with `endSection()`; documents go in with `invoice`,
+  `movement`, `workDocument` and `payment`. `w.salesInvoices(entries, debit, credit, documents)`
+  and its like take an iterator instead: `SaftInvoices`, `SaftMovements`, `SaftWorkDocuments`,
+  `SaftReceipts`, each with `next()`, null at the end.
+- `SaftTally` adds up a section the way the check does, if there is no SQL to ask: a caller making
+  two passes over its documents gets the totals from the first.
+- Every document goes through what `saftCheck` does to it. The first with an error stops the
+  write, with nothing of it written. **The sink may by then have a part of the file, and so may
+  a file sink's file: when `finish()` fails, the caller discards it.**
+- `SaftWriteOptions(unchecked = true)` skips the check and the comparison, as for `saftWrite`.
+- Signing is unchanged, and the caller's: sign a document, then give it to `invoice`.
+
+### Reading
+
+`saftStreamReader(source, options)` takes an `XmlSource` (`saftFileSource(path)` for a file).
+`next()` says what came, and it is in the reader's fields until the next call:
+
+```abla
+val r = saftStreamReader(saftFileSource(path("saft.xml")), SaftStreamReadOptions(key = key))
+while (true) {
+    val kind = r.next()
+    if (kind == saftReadEnd || kind == saftReadError) break
+    if (kind == saftReadStart) use(r.header, r.masterFiles)
+    if (kind == saftReadInvoice) store(r.invoice)     // and movement, workDocument, payment
+    // saftReadSection, saftReadSectionEnd: r.section, r.entries, r.debit, r.credit, r.quantity
+}
+val report = r.report()  // succeeded, error, issues, errors, warnings, issuesDropped, chains, documents, skippedTables
+```
+
+It does what `saftRead`, `saftCheck` and `saftVerifyChains` do, on the golden and generated
+files with the same issues and chain report. A section's totals are compared at its end, so a
+wrong one is known only after its documents were given out. The differences a stream can't avoid:
+
+- Header and MasterFiles must come before SourceDocuments, as the XSD says.
+- Each series must be in sequence order. `saftVerifyChains` sorts first; here a number lower than
+  the one before it is the problem `out_of_order`, and its signature won't verify.
+- A second Header, MasterFiles or section is an issue, where `saftRead` reads only the first.
+
+What is bounded, by `SaftStreamReadOptions`:
+
+| Held | Limit | Default |
+|---|---|---|
+| The file | `maxBytes`, an error past it | 64 GiB |
+| One document, or the header, while read | `maxDocumentBytes`, `maxDocumentNodes`, an error | 32 MiB, 1,048,576 |
+| Master files, for the whole read | `maxMasterBytes`, `maxMasterNodes`, an error | 64 MiB, 2,097,152 |
+| Issues and chain problems | `maxIssues` of each, the rest only counted | 1000 |
+| One place per series | `maxSeries`, the problem `too_many_series` | 65,536 |
+| Document numbers seen, as ranges in each series | `maxNumbers`, the error `too_many_numbers` | 1,048,576 |
+
+Master files aren't streamed: documents are checked against them, so they are in memory for
+both forms, and the memory of a stream grows with them. Numbers in sequence take one range however
+many there are, so `maxNumbers` matters only for scattered ones; past it, repeats can't be
+found, which is why it is an error. `saftStreamWriter` takes `maxIssues` and `maxNumbers` too.
+
 ## Signing
 
 ```abla
@@ -109,7 +192,9 @@ saftProcessedByText(invoice.hash, 1234)    // "AxAx-Processado por programa cert
 
 | Check | Result |
 |---|---|
-| Unit, golden and property tests (`make test`) | 6 programs, 33,915 checks, 0 failed |
+| Unit, golden and property tests (`make test`) | 7 programs, 137,303 checks, 0 failed |
+| The streaming writer against `saftWrite`, the 25 golden files and 200 generated ones | byte-identical |
+| The streaming reader against `saftRead`, `saftCheck` and `saftVerifyChains`, on the same files and on broken and tampered ones, with an openssl-made key | the same issues and chain reports |
 | 25 golden files and 200 generated ones through the **official XSD** with [xmlschema](https://github.com/sissaschool/xmlschema), an XSD 1.1 processor | 225 valid, 0 errors |
 | The same 225 through `xmllint`, on a copy of the XSD with what XSD 1.0 can't express removed (below) | 0 errors |
 | 26 deliberately invalid files through the official XSD, and `saftCheck` | all rejected by both |
@@ -119,7 +204,10 @@ saftProcessedByText(invoice.hash, 1234)    // "AxAx-Processado por programa cert
 | AT's 7 specification examples, message by message | identical, with the QR version of each figure |
 | QR PNG through this repository's sibling reader and [zbar](https://github.com/mchehab/zbar) | read exactly |
 | 119,991 decimal operations against Python's `decimal` | 0 differences |
-| AT's own demonstration file through the official XSD, reader, check and writer | 0 XSD errors, 0 check errors, control totals agree, 3,726 elements rewritten with 0 differences |
+| AT's own demonstration file through the official XSD, reader, check and writer | 0 XSD errors, 0 check errors, control totals agree, 3,726 elements rewritten with 0 differences; the streams give the same bytes and verdict |
+| A file of 3,317,751,574 bytes (3.09 GiB, 540,000 documents), `make big`, local only and not in CI | written with a peak of 186 MB in 89 s; read with every check at 288 MB in 292 s; read and written again at 268 MB in 345 s, byte-identical.At 127 MB the same programs peak at 185 MB and 268 MB |
+| That file's validity | `xmllint --stream` on the XSD 1.0 copy: valid, the whole file. Control totals recomputed in Python over the whole file: 0 differences. The official XSD through xmlschema: 0 errors, on a 1% sample (5,400 documents with the header and master files), not the whole file: xmlschema's lazy mode raises KeyError on this schema's identity constraints, and does about 1 MB/s |
+| The same run with one wrong control total | refused at the end of its section |
 
 **xmllint can't load the official schema.** It declares `vc:minVersion="1.1"` and has 19
 `xs:assert` and an `xs:all` with repeating elements, which libxml2 doesn't support. So the
@@ -174,7 +262,7 @@ Each of these was decided here for lack of a text that says so, and could be wro
 
 ## Tests
 
-`make test` is the unit, golden and property tests. `make files`, `make signatures` and
+`make test` is the unit, golden and property tests. `make big` is local only. `make files`, `make signatures` and
 `make at-demo` run the external checks above, taking their tools from Nix. A signing test
 makes its key with openssl when it runs and removes it: no private key is in this repository,
 and the golden files' Hash values come from a fake signer that no RSA key could verify.

@@ -3,6 +3,8 @@ import github("AndreBaltazar8/abla-xml")
 import "decimal.ab"
 import "model.ab"
 import "check.ab"
+import "totals.ab"
+import "abla/fs"
 
 // The XSD and AT's demonstration file both declare Windows-1252, and the Portaria
 // doesn't name an encoding (SOURCES.md). Characters outside it become references.
@@ -267,176 +269,201 @@ private fun withholding(var w: XmlWriter, items: array<SaftWithholding>): void {
     return
 }
 
-private fun invoices(var w: XmlWriter, section: SaftSalesInvoices?): void {
-    if (section == null) return
-    w.startElement("SalesInvoices")
-    w.element("NumberOfEntries", "${section.numberOfEntries}")
-    w.element("TotalDebit", section.totalDebit.text())
-    w.element("TotalCredit", section.totalCredit.text())
-    for (d in section.invoices) {
-        w.startElement("Invoice")
-        w.element("InvoiceNo", d.invoiceNo)
-        w.element("ATCUD", d.atcud)
-        status(w, "Invoice", "SourceBilling", d.status)
-        w.element("Hash", d.hash)
-        w.element("HashControl", d.hashControl)
-        optInt(w, "Period", d.period)
-        w.element("InvoiceDate", d.invoiceDate)
-        w.element("InvoiceType", d.invoiceType)
-        w.startElement("SpecialRegimes")
-        w.element("SelfBillingIndicator", "${d.selfBillingIndicator}")
-        w.element("CashVATSchemeIndicator", "${d.cashVatSchemeIndicator}")
-        w.element("ThirdPartiesBillingIndicator", "${d.thirdPartiesBillingIndicator}")
-        w.endElement()
-        w.element("SourceID", d.sourceId)
-        opt(w, "EACCode", d.eacCode)
-        w.element("SystemEntryDate", d.systemEntryDate)
-        opt(w, "TransactionID", d.transactionId)
-        w.element("CustomerID", d.customerId)
-        shipping(w, "ShipTo", d.shipTo)
-        shipping(w, "ShipFrom", d.shipFrom)
-        opt(w, "MovementEndTime", d.movementEndTime)
-        opt(w, "MovementStartTime", d.movementStartTime)
-        for (l in d.lines) line(w, l, false)
-        totalsStart(w, d.totals)
-        currency(w, d.totals.currency)
-        for (s in d.totals.settlements) {
-            w.startElement("Settlement")
-            opt(w, "SettlementDiscount", s.settlementDiscount)
-            optDec(w, "SettlementAmount", s.settlementAmount)
-            opt(w, "SettlementDate", s.settlementDate)
-            opt(w, "PaymentTerms", s.paymentTerms)
-            w.endElement()
-        }
-        for (p in d.totals.payments) paymentMethod(w, "Payment", p)
-        w.endElement()
-        withholding(w, d.withholding)
+private fun sectionStart(var w: XmlWriter, name: string, entries: int, debit: SaftDecimal, credit: SaftDecimal): void {
+    w.startElement(name)
+    w.element("NumberOfEntries", "$entries")
+    w.element("TotalDebit", debit.text())
+    w.element("TotalCredit", credit.text())
+    return
+}
+
+private fun movementsStart(var w: XmlWriter, lines: int, quantity: SaftDecimal): void {
+    w.startElement("MovementOfGoods")
+    w.element("NumberOfMovementLines", "$lines")
+    w.element("TotalQuantityIssued", quantity.text())
+    return
+}
+
+private fun invoiceDocument(var w: XmlWriter, d: SaftInvoice): void {
+    w.startElement("Invoice")
+    w.element("InvoiceNo", d.invoiceNo)
+    w.element("ATCUD", d.atcud)
+    status(w, "Invoice", "SourceBilling", d.status)
+    w.element("Hash", d.hash)
+    w.element("HashControl", d.hashControl)
+    optInt(w, "Period", d.period)
+    w.element("InvoiceDate", d.invoiceDate)
+    w.element("InvoiceType", d.invoiceType)
+    w.startElement("SpecialRegimes")
+    w.element("SelfBillingIndicator", "${d.selfBillingIndicator}")
+    w.element("CashVATSchemeIndicator", "${d.cashVatSchemeIndicator}")
+    w.element("ThirdPartiesBillingIndicator", "${d.thirdPartiesBillingIndicator}")
+    w.endElement()
+    w.element("SourceID", d.sourceId)
+    opt(w, "EACCode", d.eacCode)
+    w.element("SystemEntryDate", d.systemEntryDate)
+    opt(w, "TransactionID", d.transactionId)
+    w.element("CustomerID", d.customerId)
+    shipping(w, "ShipTo", d.shipTo)
+    shipping(w, "ShipFrom", d.shipFrom)
+    opt(w, "MovementEndTime", d.movementEndTime)
+    opt(w, "MovementStartTime", d.movementStartTime)
+    for (l in d.lines) line(w, l, false)
+    totalsStart(w, d.totals)
+    currency(w, d.totals.currency)
+    for (s in d.totals.settlements) {
+        w.startElement("Settlement")
+        opt(w, "SettlementDiscount", s.settlementDiscount)
+        optDec(w, "SettlementAmount", s.settlementAmount)
+        opt(w, "SettlementDate", s.settlementDate)
+        opt(w, "PaymentTerms", s.paymentTerms)
         w.endElement()
     }
+    for (p in d.totals.payments) paymentMethod(w, "Payment", p)
+    w.endElement()
+    withholding(w, d.withholding)
+    w.endElement()
+    return
+}
+
+private fun invoices(var w: XmlWriter, section: SaftSalesInvoices?): void {
+    if (section == null) return
+    sectionStart(w, "SalesInvoices", section.numberOfEntries, section.totalDebit, section.totalCredit)
+    for (d in section.invoices) invoiceDocument(w, d)
+    w.endElement()
+    return
+}
+
+private fun movementDocument(var w: XmlWriter, d: SaftStockMovement): void {
+    w.startElement("StockMovement")
+    w.element("DocumentNumber", d.documentNumber)
+    w.element("ATCUD", d.atcud)
+    status(w, "Movement", "SourceBilling", d.status)
+    w.element("Hash", d.hash)
+    w.element("HashControl", d.hashControl)
+    optInt(w, "Period", d.period)
+    w.element("MovementDate", d.movementDate)
+    w.element("MovementType", d.movementType)
+    w.element("SystemEntryDate", d.systemEntryDate)
+    opt(w, "TransactionID", d.transactionId)
+    opt(w, "CustomerID", d.customerId)
+    opt(w, "SupplierID", d.supplierId)
+    w.element("SourceID", d.sourceId)
+    opt(w, "EACCode", d.eacCode)
+    opt(w, "MovementComments", d.movementComments)
+    shipping(w, "ShipTo", d.shipTo)
+    shipping(w, "ShipFrom", d.shipFrom)
+    opt(w, "MovementEndTime", d.movementEndTime)
+    w.element("MovementStartTime", d.movementStartTime)
+    opt(w, "ATDocCodeID", d.atDocCodeId)
+    for (l in d.lines) line(w, l, true)
+    totalsStart(w, d.totals)
+    currency(w, d.totals.currency)
+    w.endElement()
     w.endElement()
     return
 }
 
 private fun movements(var w: XmlWriter, section: SaftMovementOfGoods?): void {
     if (section == null) return
-    w.startElement("MovementOfGoods")
-    w.element("NumberOfMovementLines", "${section.numberOfMovementLines}")
-    w.element("TotalQuantityIssued", section.totalQuantityIssued.text())
-    for (d in section.movements) {
-        w.startElement("StockMovement")
-        w.element("DocumentNumber", d.documentNumber)
-        w.element("ATCUD", d.atcud)
-        status(w, "Movement", "SourceBilling", d.status)
-        w.element("Hash", d.hash)
-        w.element("HashControl", d.hashControl)
-        optInt(w, "Period", d.period)
-        w.element("MovementDate", d.movementDate)
-        w.element("MovementType", d.movementType)
-        w.element("SystemEntryDate", d.systemEntryDate)
-        opt(w, "TransactionID", d.transactionId)
-        opt(w, "CustomerID", d.customerId)
-        opt(w, "SupplierID", d.supplierId)
-        w.element("SourceID", d.sourceId)
-        opt(w, "EACCode", d.eacCode)
-        opt(w, "MovementComments", d.movementComments)
-        shipping(w, "ShipTo", d.shipTo)
-        shipping(w, "ShipFrom", d.shipFrom)
-        opt(w, "MovementEndTime", d.movementEndTime)
-        w.element("MovementStartTime", d.movementStartTime)
-        opt(w, "ATDocCodeID", d.atDocCodeId)
-        for (l in d.lines) line(w, l, true)
-        totalsStart(w, d.totals)
-        currency(w, d.totals.currency)
-        w.endElement()
-        w.endElement()
-    }
+    movementsStart(w, section.numberOfMovementLines, section.totalQuantityIssued)
+    for (d in section.movements) movementDocument(w, d)
+    w.endElement()
+    return
+}
+
+private fun workDocumentElement(var w: XmlWriter, d: SaftWorkDocument): void {
+    w.startElement("WorkDocument")
+    w.element("DocumentNumber", d.documentNumber)
+    w.element("ATCUD", d.atcud)
+    status(w, "Work", "SourceBilling", d.status)
+    w.element("Hash", d.hash)
+    w.element("HashControl", d.hashControl)
+    optInt(w, "Period", d.period)
+    w.element("WorkDate", d.workDate)
+    w.element("WorkType", d.workType)
+    w.element("SourceID", d.sourceId)
+    opt(w, "EACCode", d.eacCode)
+    w.element("SystemEntryDate", d.systemEntryDate)
+    opt(w, "TransactionID", d.transactionId)
+    w.element("CustomerID", d.customerId)
+    for (l in d.lines) line(w, l, false)
+    totalsStart(w, d.totals)
+    currency(w, d.totals.currency)
+    w.endElement()
     w.endElement()
     return
 }
 
 private fun workDocuments(var w: XmlWriter, section: SaftWorkingDocuments?): void {
     if (section == null) return
-    w.startElement("WorkingDocuments")
-    w.element("NumberOfEntries", "${section.numberOfEntries}")
-    w.element("TotalDebit", section.totalDebit.text())
-    w.element("TotalCredit", section.totalCredit.text())
-    for (d in section.documents) {
-        w.startElement("WorkDocument")
-        w.element("DocumentNumber", d.documentNumber)
-        w.element("ATCUD", d.atcud)
-        status(w, "Work", "SourceBilling", d.status)
-        w.element("Hash", d.hash)
-        w.element("HashControl", d.hashControl)
-        optInt(w, "Period", d.period)
-        w.element("WorkDate", d.workDate)
-        w.element("WorkType", d.workType)
-        w.element("SourceID", d.sourceId)
-        opt(w, "EACCode", d.eacCode)
-        w.element("SystemEntryDate", d.systemEntryDate)
-        opt(w, "TransactionID", d.transactionId)
-        w.element("CustomerID", d.customerId)
-        for (l in d.lines) line(w, l, false)
-        totalsStart(w, d.totals)
-        currency(w, d.totals.currency)
-        w.endElement()
+    sectionStart(w, "WorkingDocuments", section.numberOfEntries, section.totalDebit, section.totalCredit)
+    for (d in section.documents) workDocumentElement(w, d)
+    w.endElement()
+    return
+}
+
+private fun paymentDocument(var w: XmlWriter, d: SaftPayment): void {
+    w.startElement("Payment")
+    w.element("PaymentRefNo", d.paymentRefNo)
+    w.element("ATCUD", d.atcud)
+    optInt(w, "Period", d.period)
+    opt(w, "TransactionID", d.transactionId)
+    w.element("TransactionDate", d.transactionDate)
+    w.element("PaymentType", d.paymentType)
+    opt(w, "Description", d.description)
+    opt(w, "SystemID", d.systemId)
+    status(w, "Payment", "SourcePayment", d.status)
+    for (p in d.methods) paymentMethod(w, "PaymentMethod", p)
+    w.element("SourceID", d.sourceId)
+    w.element("SystemEntryDate", d.systemEntryDate)
+    w.element("CustomerID", d.customerId)
+    for (l in d.lines) {
+        w.startElement("Line")
+        w.element("LineNumber", "${l.lineNumber}")
+        for (s in l.sourceDocuments) {
+            w.startElement("SourceDocumentID")
+            w.element("OriginatingON", s.originatingOn)
+            w.element("InvoiceDate", s.invoiceDate)
+            opt(w, "Description", s.description)
+            w.endElement()
+        }
+        optDec(w, "SettlementAmount", l.settlementAmount)
+        optDec(w, "DebitAmount", l.debitAmount)
+        optDec(w, "CreditAmount", l.creditAmount)
+        taxElement(w, l.tax)
+        opt(w, "TaxExemptionReason", l.taxExemptionReason)
+        opt(w, "TaxExemptionCode", l.taxExemptionCode)
         w.endElement()
     }
+    totalsStart(w, d.totals)
+    val settled = d.totals.settlementAmount
+    if (settled != null) {
+        w.startElement("Settlement")
+        w.element("SettlementAmount", settled.text())
+        w.endElement()
+    }
+    currency(w, d.totals.currency)
+    w.endElement()
+    withholding(w, d.withholding)
     w.endElement()
     return
 }
 
 private fun receipts(var w: XmlWriter, section: SaftPayments?): void {
     if (section == null) return
-    w.startElement("Payments")
-    w.element("NumberOfEntries", "${section.numberOfEntries}")
-    w.element("TotalDebit", section.totalDebit.text())
-    w.element("TotalCredit", section.totalCredit.text())
-    for (d in section.payments) {
-        w.startElement("Payment")
-        w.element("PaymentRefNo", d.paymentRefNo)
-        w.element("ATCUD", d.atcud)
-        optInt(w, "Period", d.period)
-        opt(w, "TransactionID", d.transactionId)
-        w.element("TransactionDate", d.transactionDate)
-        w.element("PaymentType", d.paymentType)
-        opt(w, "Description", d.description)
-        opt(w, "SystemID", d.systemId)
-        status(w, "Payment", "SourcePayment", d.status)
-        for (p in d.methods) paymentMethod(w, "PaymentMethod", p)
-        w.element("SourceID", d.sourceId)
-        w.element("SystemEntryDate", d.systemEntryDate)
-        w.element("CustomerID", d.customerId)
-        for (l in d.lines) {
-            w.startElement("Line")
-            w.element("LineNumber", "${l.lineNumber}")
-            for (s in l.sourceDocuments) {
-                w.startElement("SourceDocumentID")
-                w.element("OriginatingON", s.originatingOn)
-                w.element("InvoiceDate", s.invoiceDate)
-                opt(w, "Description", s.description)
-                w.endElement()
-            }
-            optDec(w, "SettlementAmount", l.settlementAmount)
-            optDec(w, "DebitAmount", l.debitAmount)
-            optDec(w, "CreditAmount", l.creditAmount)
-            taxElement(w, l.tax)
-            opt(w, "TaxExemptionReason", l.taxExemptionReason)
-            opt(w, "TaxExemptionCode", l.taxExemptionCode)
-            w.endElement()
-        }
-        totalsStart(w, d.totals)
-        val settled = d.totals.settlementAmount
-        if (settled != null) {
-            w.startElement("Settlement")
-            w.element("SettlementAmount", settled.text())
-            w.endElement()
-        }
-        currency(w, d.totals.currency)
-        w.endElement()
-        withholding(w, d.withholding)
-        w.endElement()
-    }
+    sectionStart(w, "Payments", section.numberOfEntries, section.totalDebit, section.totalCredit)
+    for (d in section.payments) paymentDocument(w, d)
     w.endElement()
+    return
+}
+
+private fun fileStart(var w: XmlWriter, h: SaftHeader, m: SaftMasterFiles): void {
+    w.declaration()
+    w.startElement("AuditFile")
+    w.namespace("", saftNamespace)
+    header(w, h)
+    masterFiles(w, m)
     return
 }
 
@@ -446,11 +473,7 @@ fun saftWrite(file: SaftFile, options: SaftWriteOptions = SaftWriteOptions()): S
     val issues = if (options.unchecked) array<SaftIssue>() else saftCheck(file)
     if (saftHasErrors(issues)) return SaftWriteResult(false, "", issues, "the file has errors: see issues")
     val w = xmlWriter(XmlWriterOptions(encoding = options.encoding, indent = options.indent))
-    w.declaration()
-    w.startElement("AuditFile")
-    w.namespace("", saftNamespace)
-    header(w, file.header)
-    masterFiles(w, file.masterFiles)
+    fileStart(w, file.header, file.masterFiles)
     if (file.salesInvoices != null || file.movementOfGoods != null || file.workingDocuments != null || file.payments != null) {
         w.startElement("SourceDocuments")
         invoices(w, file.salesInvoices)
@@ -462,4 +485,252 @@ fun saftWrite(file: SaftFile, options: SaftWriteOptions = SaftWriteOptions()): S
     w.endElement()
     val result = w.finish()
     SaftWriteResult(result.succeeded, result.text, issues, result.errorMessage)
+}
+
+// A sink for saftStreamWriter or a source for saftStreamReader, on a file.
+fun saftFileSink(filePath: Path): XmlFileSink = xmlFileSink(filePath)
+
+// Where a stream writer can get its documents from, when it isn't handed them one by one.
+interface SaftInvoices { fun next(): SaftInvoice? }
+interface SaftMovements { fun next(): SaftStockMovement? }
+interface SaftWorkDocuments { fun next(): SaftWorkDocument? }
+interface SaftReceipts { fun next(): SaftPayment? }
+
+class SaftStreamResult(
+    val succeeded: bool,
+    val errorMessage: string,
+    // What the check found, up to maxIssues of each severity.
+    val issues: array<SaftIssue>,
+    val issuesDropped: int,
+    val documents: int,
+    val bytesWritten: int
+)
+
+private val SECTION_NONE = 0
+private val SECTION_SALES = 1
+private val SECTION_GOODS = 2
+private val SECTION_WORK = 3
+private val SECTION_PAYMENTS = 4
+
+// saftWrite a document at a time. The header and master files are written at once and
+// each document as it is given, in memory for no more than that; control totals come
+// before the documents in the file, so they are given up front, computed by the caller,
+// from SQL for instance, and compared with the documents at the end of each section.
+//
+// The output is the bytes saftWrite gives for the same data. A check error stops the
+// writer where it is found, or at a section's end for a wrong total; finish() then says
+// so and what the sink got so far isn't a file, which is the caller's to discard.
+class SaftStreamWriter(
+    val w: XmlWriter,
+    val check: SaftStreamCheck,
+    val unchecked: bool,
+    var section: int = 0,
+    var last: int = 0,
+    var inSources: bool = false,
+    var declaredEntries: int = 0,
+    var declaredDebit: SaftDecimal = saftDecimalZero(),
+    var declaredCredit: SaftDecimal = saftDecimalZero(),
+    var documents: int = 0,
+    var problem: string = "",
+    var finished: bool = false
+) {
+    fun checkProblem(): bool {
+        if (problem == "" && !unchecked && check.c.errors > 0) problem = "the file has errors: see issues"
+        problem != ""
+    }
+
+    fun refuse(message: string): void {
+        if (problem == "") problem = message
+        return
+    }
+
+    fun begin(wanted: int): bool {
+        if (checkProblem()) return false
+        if (section != SECTION_NONE) {
+            refuse("a section is still open: call endSection first")
+            return false
+        }
+        if (wanted <= last) {
+            refuse("sections go in the order SalesInvoices, MovementOfGoods, WorkingDocuments, Payments, each once")
+            return false
+        }
+        if (!inSources) {
+            w.startElement("SourceDocuments")
+            inSources = true
+        }
+        section = wanted
+        last = wanted
+        check.startSection()
+        true
+    }
+
+    fun startSalesInvoices(numberOfEntries: int, totalDebit: SaftDecimal, totalCredit: SaftDecimal): void {
+        if (!begin(SECTION_SALES)) return
+        declaredEntries = numberOfEntries
+        declaredDebit = totalDebit
+        declaredCredit = totalCredit
+        sectionStart(w, "SalesInvoices", numberOfEntries, totalDebit, totalCredit)
+        return
+    }
+
+    fun startMovementOfGoods(numberOfMovementLines: int, totalQuantityIssued: SaftDecimal): void {
+        if (!begin(SECTION_GOODS)) return
+        declaredEntries = numberOfMovementLines
+        declaredDebit = totalQuantityIssued
+        movementsStart(w, numberOfMovementLines, totalQuantityIssued)
+        return
+    }
+
+    fun startWorkingDocuments(numberOfEntries: int, totalDebit: SaftDecimal, totalCredit: SaftDecimal): void {
+        if (!begin(SECTION_WORK)) return
+        declaredEntries = numberOfEntries
+        declaredDebit = totalDebit
+        declaredCredit = totalCredit
+        sectionStart(w, "WorkingDocuments", numberOfEntries, totalDebit, totalCredit)
+        return
+    }
+
+    fun startPayments(numberOfEntries: int, totalDebit: SaftDecimal, totalCredit: SaftDecimal): void {
+        if (!begin(SECTION_PAYMENTS)) return
+        declaredEntries = numberOfEntries
+        declaredDebit = totalDebit
+        declaredCredit = totalCredit
+        sectionStart(w, "Payments", numberOfEntries, totalDebit, totalCredit)
+        return
+    }
+
+    fun ready(wanted: int): bool {
+        if (checkProblem()) return false
+        if (section != wanted) {
+            refuse("a document of another section: start its section first")
+            return false
+        }
+        documents = documents + 1
+        true
+    }
+
+    // Each document is checked as saftCheck would, and written if it passes.
+    fun invoice(d: SaftInvoice): void {
+        if (!ready(SECTION_SALES)) return
+        if (!unchecked) check.invoice(d)
+        if (!checkProblem()) invoiceDocument(w, d)
+        return
+    }
+
+    fun movement(d: SaftStockMovement): void {
+        if (!ready(SECTION_GOODS)) return
+        if (!unchecked) check.movement(d)
+        if (!checkProblem()) movementDocument(w, d)
+        return
+    }
+
+    fun workDocument(d: SaftWorkDocument): void {
+        if (!ready(SECTION_WORK)) return
+        if (!unchecked) check.workDocument(d)
+        if (!checkProblem()) workDocumentElement(w, d)
+        return
+    }
+
+    fun payment(d: SaftPayment): void {
+        if (!ready(SECTION_PAYMENTS)) return
+        if (!unchecked) check.payment(d)
+        if (!checkProblem()) paymentDocument(w, d)
+        return
+    }
+
+    // Compares the totals the section started with to its documents. Writing the
+    // section's end is what a wrong total refuses.
+    fun endSection(): void {
+        if (section == SECTION_NONE) {
+            refuse("no section is open")
+            return
+        }
+        val ending = section
+        section = SECTION_NONE
+        if (checkProblem()) return
+        if (!unchecked) {
+            if (ending == SECTION_SALES) check.endDebitCredit("SalesInvoices", declaredEntries, declaredDebit, declaredCredit)
+            if (ending == SECTION_GOODS) check.endMovements(declaredEntries, declaredDebit)
+            if (ending == SECTION_WORK) check.endDebitCredit("WorkingDocuments", declaredEntries, declaredDebit, declaredCredit)
+            if (ending == SECTION_PAYMENTS) check.endDebitCredit("Payments", declaredEntries, declaredDebit, declaredCredit)
+            if (checkProblem()) return
+        }
+        w.endElement()
+        return
+    }
+
+    // A whole section from an iterator, such as one paging through a database.
+    fun salesInvoices(numberOfEntries: int, totalDebit: SaftDecimal, totalCredit: SaftDecimal, documents: SaftInvoices): void {
+        startSalesInvoices(numberOfEntries, totalDebit, totalCredit)
+        while (problem == "") {
+            val d = documents.next()
+            if (d == null) break
+            invoice(d)
+            checkProblem()
+        }
+        endSection()
+        return
+    }
+
+    fun movementOfGoods(numberOfMovementLines: int, totalQuantityIssued: SaftDecimal, documents: SaftMovements): void {
+        startMovementOfGoods(numberOfMovementLines, totalQuantityIssued)
+        while (problem == "") {
+            val d = documents.next()
+            if (d == null) break
+            movement(d)
+            checkProblem()
+        }
+        endSection()
+        return
+    }
+
+    fun workingDocuments(numberOfEntries: int, totalDebit: SaftDecimal, totalCredit: SaftDecimal, documents: SaftWorkDocuments): void {
+        startWorkingDocuments(numberOfEntries, totalDebit, totalCredit)
+        while (problem == "") {
+            val d = documents.next()
+            if (d == null) break
+            workDocument(d)
+            checkProblem()
+        }
+        endSection()
+        return
+    }
+
+    fun payments(numberOfEntries: int, totalDebit: SaftDecimal, totalCredit: SaftDecimal, documents: SaftReceipts): void {
+        startPayments(numberOfEntries, totalDebit, totalCredit)
+        while (problem == "") {
+            val d = documents.next()
+            if (d == null) break
+            payment(d)
+            checkProblem()
+        }
+        endSection()
+        return
+    }
+
+    // Ends the file and closes the sink, which happens also after a problem.
+    fun finish(): SaftStreamResult {
+        if (section != SECTION_NONE && !checkProblem()) refuse("a section is still open: call endSection first")
+        checkProblem()
+        if (problem != "" && !w.failed()) w.fail("refused", problem)
+        if (problem == "" && !finished) {
+            if (inSources) w.endElement()
+            w.endElement()
+        }
+        finished = true
+        val result = w.finish()
+        val message = if (problem != "") problem else result.errorMessage
+        SaftStreamResult(problem == "" && result.succeeded, message, check.issues(), check.c.dropped, documents, result.bytesWritten)
+    }
+}
+
+// Starts a file: the header and master files go through the check and out to the sink.
+// `maxIssues` keeps that many of each severity. `maxNumbers` bounds the memory for finding
+// repeated document numbers, which a series numbered in sequence hardly uses.
+fun saftStreamWriter(h: SaftHeader, m: SaftMasterFiles, sink: XmlSink, options: SaftWriteOptions = SaftWriteOptions(), maxIssues: int = 1000, maxNumbers: int = 1048576): SaftStreamWriter {
+    val w = xmlStreamWriter(sink, XmlWriterOptions(encoding = options.encoding, indent = options.indent))
+    val check = saftStreamCheck(h, m, maxIssues, maxNumbers)
+    val out = SaftStreamWriter(w, check, options.unchecked)
+    if (!out.checkProblem()) fileStart(w, h, m)
+    out
 }

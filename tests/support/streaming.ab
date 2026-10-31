@@ -1,0 +1,82 @@
+// Puts a file in memory through the streaming API, for comparing with saftWrite and saftRead.
+import "../../src/saft.ab"
+import github("AndreBaltazar8/abla-xml")
+import "abla/bytes"
+
+class Collect(val parts: ByteBuffer, var closes: int = 0) : XmlSink {
+    fun write(bytes: string): bool {
+        parts.appendText(bytes)
+        true
+    }
+
+    fun close(): bool {
+        closes = closes + 1
+        true
+    }
+}
+
+fun streamFile(file: SaftFile, var w: SaftStreamWriter): void {
+    val sales = file.salesInvoices
+    if (sales != null) {
+        w.startSalesInvoices(sales.numberOfEntries, sales.totalDebit, sales.totalCredit)
+        for (d in sales.invoices) w.invoice(d)
+        w.endSection()
+    }
+    val goods = file.movementOfGoods
+    if (goods != null) {
+        w.startMovementOfGoods(goods.numberOfMovementLines, goods.totalQuantityIssued)
+        for (d in goods.movements) w.movement(d)
+        w.endSection()
+    }
+    val work = file.workingDocuments
+    if (work != null) {
+        w.startWorkingDocuments(work.numberOfEntries, work.totalDebit, work.totalCredit)
+        for (d in work.documents) w.workDocument(d)
+        w.endSection()
+    }
+    val receipts = file.payments
+    if (receipts != null) {
+        w.startPayments(receipts.numberOfEntries, receipts.totalDebit, receipts.totalCredit)
+        for (d in receipts.payments) w.payment(d)
+        w.endSection()
+    }
+    return
+}
+
+// Everything a stream reader gives, through a stream writer: one bigger program's way of
+// copying a file without holding it.
+fun copyEvents(var r: SaftStreamReader, sink: XmlSink, options: SaftWriteOptions = SaftWriteOptions()): SaftStreamResult? {
+    var kind = r.next()
+    if (kind != saftReadStart) return null
+    val h = r.header
+    val m = r.masterFiles
+    if (h == null || m == null) return null
+    val w = saftStreamWriter(h, m, sink, options)
+    while (true) {
+        kind = r.next()
+        if (kind == saftReadEnd || kind == saftReadError) break
+        if (kind == saftReadSection) {
+            when (r.section) {
+                "SalesInvoices" -> w.startSalesInvoices(r.entries, r.debit, r.credit)
+                "MovementOfGoods" -> w.startMovementOfGoods(r.entries, r.quantity)
+                "WorkingDocuments" -> w.startWorkingDocuments(r.entries, r.debit, r.credit)
+                else -> w.startPayments(r.entries, r.debit, r.credit)
+            }
+        } else if (kind == saftReadSectionEnd) {
+            w.endSection()
+        } else if (kind == saftReadInvoice) {
+            val d = r.invoice
+            if (d != null) w.invoice(d)
+        } else if (kind == saftReadMovement) {
+            val d = r.movement
+            if (d != null) w.movement(d)
+        } else if (kind == saftReadWorkDocument) {
+            val d = r.workDocument
+            if (d != null) w.workDocument(d)
+        } else if (kind == saftReadPayment) {
+            val d = r.payment
+            if (d != null) w.payment(d)
+        }
+    }
+    w.finish()
+}

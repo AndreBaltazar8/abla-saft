@@ -6,12 +6,14 @@ import "abla/text"
 import "check.ab"
 import "decimal.ab"
 import "model.ab"
+import "sign.ab"
+import "abla/fs"
 
 class SaftReadResult(val file: SaftFile?, val issues: array<SaftIssue>, val error: string) {
     fun succeeded(): bool = error == ""
 }
 
-private class Reader(val issues: array<SaftIssue>) {
+class SaftTreeReader(val issues: array<SaftIssue>) {
     fun problem(el: XmlElement, code: string, message: string): void {
         issues.append(SaftIssue(saftSeverityError, code, "line ${el.line}: ${el.localName}", message))
         return
@@ -232,51 +234,57 @@ private class Reader(val issues: array<SaftIssue>) {
         out
     }
 
+    fun invoice(d: XmlElement): SaftInvoice {
+        known(d, "InvoiceNo ATCUD DocumentStatus Hash HashControl Period InvoiceDate InvoiceType SpecialRegimes SourceID EACCode SystemEntryDate TransactionID CustomerID ShipTo ShipFrom MovementEndTime MovementStartTime Line DocumentTotals WithholdingTax")
+        var self = 0
+        var cash = 0
+        var third = 0
+        val regimes = d.child("SpecialRegimes")
+        if (regimes == null) problem(d, "required", "SpecialRegimes is missing")
+        else {
+            self = integer(regimes, "SelfBillingIndicator", 0, true)
+            cash = integer(regimes, "CashVATSchemeIndicator", 0, true)
+            third = integer(regimes, "ThirdPartiesBillingIndicator", 0, true)
+        }
+        SaftInvoice(required(d, "InvoiceNo"), required(d, "ATCUD"), status(d, "Invoice", "SourceBilling"), required(d, "InvoiceDate"), required(d, "InvoiceType"),
+            required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "CustomerID"), lines(d), totals(d), required(d, "Hash"), required(d, "HashControl"),
+            integer(d, "Period", 0, false), self, cash, third, optional(d, "EACCode"), optional(d, "TransactionID"), shipping(d, "ShipTo"), shipping(d, "ShipFrom"),
+            optional(d, "MovementEndTime"), optional(d, "MovementStartTime"), withholding(d))
+    }
+
     fun invoices(el: XmlElement): SaftSalesInvoices {
         known(el, "NumberOfEntries TotalDebit TotalCredit Invoice")
         val out: array<SaftInvoice> = []
-        for (d in el.elements("Invoice")) {
-            known(d, "InvoiceNo ATCUD DocumentStatus Hash HashControl Period InvoiceDate InvoiceType SpecialRegimes SourceID EACCode SystemEntryDate TransactionID CustomerID ShipTo ShipFrom MovementEndTime MovementStartTime Line DocumentTotals WithholdingTax")
-            var self = 0
-            var cash = 0
-            var third = 0
-            val regimes = d.child("SpecialRegimes")
-            if (regimes == null) problem(d, "required", "SpecialRegimes is missing")
-            else {
-                self = integer(regimes, "SelfBillingIndicator", 0, true)
-                cash = integer(regimes, "CashVATSchemeIndicator", 0, true)
-                third = integer(regimes, "ThirdPartiesBillingIndicator", 0, true)
-            }
-            out.append(SaftInvoice(required(d, "InvoiceNo"), required(d, "ATCUD"), status(d, "Invoice", "SourceBilling"), required(d, "InvoiceDate"), required(d, "InvoiceType"),
-                required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "CustomerID"), lines(d), totals(d), required(d, "Hash"), required(d, "HashControl"),
-                integer(d, "Period", 0, false), self, cash, third, optional(d, "EACCode"), optional(d, "TransactionID"), shipping(d, "ShipTo"), shipping(d, "ShipFrom"),
-                optional(d, "MovementEndTime"), optional(d, "MovementStartTime"), withholding(d)))
-        }
+        for (d in el.elements("Invoice")) out.append(invoice(d))
         SaftSalesInvoices(integer(el, "NumberOfEntries", 0, true), amount(el, "TotalDebit"), amount(el, "TotalCredit"), out)
+    }
+
+    fun movement(d: XmlElement): SaftStockMovement {
+        known(d, "DocumentNumber ATCUD DocumentStatus Hash HashControl Period MovementDate MovementType SystemEntryDate TransactionID CustomerID SupplierID SourceID EACCode MovementComments ShipTo ShipFrom MovementEndTime MovementStartTime ATDocCodeID Line DocumentTotals")
+        SaftStockMovement(required(d, "DocumentNumber"), required(d, "ATCUD"), status(d, "Movement", "SourceBilling"), required(d, "MovementDate"), required(d, "MovementType"),
+            required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "MovementStartTime"), lines(d), totals(d), optional(d, "CustomerID"), optional(d, "SupplierID"),
+            required(d, "Hash"), required(d, "HashControl"), integer(d, "Period", 0, false), optional(d, "TransactionID"), optional(d, "EACCode"), optional(d, "MovementComments"),
+            shipping(d, "ShipTo"), shipping(d, "ShipFrom"), optional(d, "MovementEndTime"), optional(d, "ATDocCodeID"))
     }
 
     fun movements(el: XmlElement): SaftMovementOfGoods {
         known(el, "NumberOfMovementLines TotalQuantityIssued StockMovement")
         val out: array<SaftStockMovement> = []
-        for (d in el.elements("StockMovement")) {
-            known(d, "DocumentNumber ATCUD DocumentStatus Hash HashControl Period MovementDate MovementType SystemEntryDate TransactionID CustomerID SupplierID SourceID EACCode MovementComments ShipTo ShipFrom MovementEndTime MovementStartTime ATDocCodeID Line DocumentTotals")
-            out.append(SaftStockMovement(required(d, "DocumentNumber"), required(d, "ATCUD"), status(d, "Movement", "SourceBilling"), required(d, "MovementDate"), required(d, "MovementType"),
-                required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "MovementStartTime"), lines(d), totals(d), optional(d, "CustomerID"), optional(d, "SupplierID"),
-                required(d, "Hash"), required(d, "HashControl"), integer(d, "Period", 0, false), optional(d, "TransactionID"), optional(d, "EACCode"), optional(d, "MovementComments"),
-                shipping(d, "ShipTo"), shipping(d, "ShipFrom"), optional(d, "MovementEndTime"), optional(d, "ATDocCodeID")))
-        }
+        for (d in el.elements("StockMovement")) out.append(movement(d))
         SaftMovementOfGoods(integer(el, "NumberOfMovementLines", 0, true), amount(el, "TotalQuantityIssued"), out)
+    }
+
+    fun workDocument(d: XmlElement): SaftWorkDocument {
+        known(d, "DocumentNumber ATCUD DocumentStatus Hash HashControl Period WorkDate WorkType SourceID EACCode SystemEntryDate TransactionID CustomerID Line DocumentTotals")
+        SaftWorkDocument(required(d, "DocumentNumber"), required(d, "ATCUD"), status(d, "Work", "SourceBilling"), required(d, "WorkDate"), required(d, "WorkType"),
+            required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "CustomerID"), lines(d), totals(d), required(d, "Hash"), required(d, "HashControl"),
+            integer(d, "Period", 0, false), optional(d, "EACCode"), optional(d, "TransactionID"))
     }
 
     fun workDocuments(el: XmlElement): SaftWorkingDocuments {
         known(el, "NumberOfEntries TotalDebit TotalCredit WorkDocument")
         val out: array<SaftWorkDocument> = []
-        for (d in el.elements("WorkDocument")) {
-            known(d, "DocumentNumber ATCUD DocumentStatus Hash HashControl Period WorkDate WorkType SourceID EACCode SystemEntryDate TransactionID CustomerID Line DocumentTotals")
-            out.append(SaftWorkDocument(required(d, "DocumentNumber"), required(d, "ATCUD"), status(d, "Work", "SourceBilling"), required(d, "WorkDate"), required(d, "WorkType"),
-                required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "CustomerID"), lines(d), totals(d), required(d, "Hash"), required(d, "HashControl"),
-                integer(d, "Period", 0, false), optional(d, "EACCode"), optional(d, "TransactionID")))
-        }
+        for (d in el.elements("WorkDocument")) out.append(workDocument(d))
         SaftWorkingDocuments(integer(el, "NumberOfEntries", 0, true), amount(el, "TotalDebit"), amount(el, "TotalCredit"), out)
     }
 
@@ -288,36 +296,38 @@ private class Reader(val issues: array<SaftIssue>) {
             optional(el, "TaxExemptionReason"), optional(el, "TaxExemptionCode"))
     }
 
+    fun receipt(d: XmlElement): SaftPayment {
+        known(d, "PaymentRefNo ATCUD Period TransactionID TransactionDate PaymentType Description SystemID DocumentStatus PaymentMethod SourceID SystemEntryDate CustomerID Line DocumentTotals WithholdingTax")
+        val paymentLines: array<SaftPaymentLine> = []
+        for (l in d.elements("Line")) paymentLines.append(paymentLine(l))
+        val methods: array<SaftPaymentMethod> = []
+        for (m in d.elements("PaymentMethod")) methods.append(method(m))
+        var taxPayable = saftDecimalZero()
+        var net = saftDecimalZero()
+        var gross = saftDecimalZero()
+        var currency: SaftCurrency? = null
+        var settled: SaftDecimal? = null
+        val t = d.child("DocumentTotals")
+        if (t == null) problem(d, "required", "DocumentTotals is missing")
+        else {
+            known(t, "TaxPayable NetTotal GrossTotal Settlement Currency")
+            taxPayable = amount(t, "TaxPayable")
+            net = amount(t, "NetTotal")
+            gross = amount(t, "GrossTotal")
+            val s = t.child("Settlement")
+            if (s != null) settled = amount(s, "SettlementAmount")
+            val c = t.child("Currency")
+            if (c != null) currency = SaftCurrency(required(c, "CurrencyCode"), amount(c, "CurrencyAmount"), amount(c, "ExchangeRate"))
+        }
+        SaftPayment(required(d, "PaymentRefNo"), required(d, "ATCUD"), required(d, "TransactionDate"), required(d, "PaymentType"), status(d, "Payment", "SourcePayment"),
+            required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "CustomerID"), paymentLines, SaftDocumentTotals(taxPayable, net, gross, currency, settlementAmount = settled),
+            integer(d, "Period", 0, false), optional(d, "TransactionID"), optional(d, "Description"), optional(d, "SystemID"), methods, withholding(d))
+    }
+
     fun receipts(el: XmlElement): SaftPayments {
         known(el, "NumberOfEntries TotalDebit TotalCredit Payment")
         val out: array<SaftPayment> = []
-        for (d in el.elements("Payment")) {
-            known(d, "PaymentRefNo ATCUD Period TransactionID TransactionDate PaymentType Description SystemID DocumentStatus PaymentMethod SourceID SystemEntryDate CustomerID Line DocumentTotals WithholdingTax")
-            val paymentLines: array<SaftPaymentLine> = []
-            for (l in d.elements("Line")) paymentLines.append(paymentLine(l))
-            val methods: array<SaftPaymentMethod> = []
-            for (m in d.elements("PaymentMethod")) methods.append(method(m))
-            var taxPayable = saftDecimalZero()
-            var net = saftDecimalZero()
-            var gross = saftDecimalZero()
-            var currency: SaftCurrency? = null
-            var settled: SaftDecimal? = null
-            val t = d.child("DocumentTotals")
-            if (t == null) problem(d, "required", "DocumentTotals is missing")
-            else {
-                known(t, "TaxPayable NetTotal GrossTotal Settlement Currency")
-                taxPayable = amount(t, "TaxPayable")
-                net = amount(t, "NetTotal")
-                gross = amount(t, "GrossTotal")
-                val s = t.child("Settlement")
-                if (s != null) settled = amount(s, "SettlementAmount")
-                val c = t.child("Currency")
-                if (c != null) currency = SaftCurrency(required(c, "CurrencyCode"), amount(c, "CurrencyAmount"), amount(c, "ExchangeRate"))
-            }
-            out.append(SaftPayment(required(d, "PaymentRefNo"), required(d, "ATCUD"), required(d, "TransactionDate"), required(d, "PaymentType"), status(d, "Payment", "SourcePayment"),
-                required(d, "SourceID"), required(d, "SystemEntryDate"), required(d, "CustomerID"), paymentLines, SaftDocumentTotals(taxPayable, net, gross, currency, settlementAmount = settled),
-                integer(d, "Period", 0, false), optional(d, "TransactionID"), optional(d, "Description"), optional(d, "SystemID"), methods, withholding(d)))
-        }
+        for (d in el.elements("Payment")) out.append(receipt(d))
         SaftPayments(integer(el, "NumberOfEntries", 0, true), amount(el, "TotalDebit"), amount(el, "TotalCredit"), out)
     }
 }
@@ -343,7 +353,7 @@ fun saftRead(source: string, maxBytes: int = 268435456): SaftReadResult {
     val version = headerElement.childText("AuditFileVersion")
     if (version != saftAuditFileVersion) return SaftReadResult(null, none, "the version is \"$version\", this reads $saftAuditFileVersion")
 
-    val r = Reader(array<SaftIssue>())
+    val r = SaftTreeReader(array<SaftIssue>())
     r.known(root, "Header MasterFiles GeneralLedgerEntries SourceDocuments")
     r.known(master, "GeneralLedgerAccounts Customer Supplier Product TaxTable")
     val skipped: array<string> = []
@@ -369,4 +379,434 @@ fun saftRead(source: string, maxBytes: int = 268435456): SaftReadResult {
     val issues: array<SaftIssue> = []
     for (issue in r.issues) issues.append(issue)
     SaftReadResult(file, issues, "")
+}
+
+// A source for saftStreamReader, on a file.
+fun saftFileSource(filePath: Path): XmlFileSource = xmlFileSource(filePath)
+
+class SaftStreamReadOptions(
+    // Largest file. An error past it, as for saftRead.
+    val maxBytes: int = 68719476736,
+    // Largest single document, and the header. Each is held whole while it is read.
+    val maxDocumentBytes: int = 33554432,
+    val maxDocumentNodes: int = 1048576,
+    // Largest MasterFiles, which is held for the whole read: documents refer to it.
+    val maxMasterBytes: int = 67108864,
+    val maxMasterNodes: int = 2097152,
+    // How many issues and chain problems to keep of each severity, beyond which they
+    // are only counted.
+    val maxIssues: int = 1000,
+    // saftCheck on each document, and control totals against the documents. Off, this
+    // only reads, as saftRead does.
+    val check: bool = true,
+    // saftVerifyChains on each series as its documents pass. With `key`, signatures too.
+    val chains: bool = true,
+    val key: SaftRsaPublicKey? = null,
+    val maxSeries: int = 65536,
+    // See SaftDocumentNumbers.
+    val maxNumbers: int = 1048576
+)
+
+val saftReadStart = 1
+val saftReadSection = 2
+val saftReadInvoice = 3
+val saftReadMovement = 4
+val saftReadWorkDocument = 5
+val saftReadPayment = 6
+val saftReadSectionEnd = 7
+val saftReadEnd = 8
+val saftReadError = 9
+
+// What a whole read found, from report().
+class SaftStreamReport(
+    val succeeded: bool,
+    val error: string,
+    val issues: array<SaftIssue>,
+    val errors: int,
+    val warnings: int,
+    val issuesDropped: int,
+    val chains: SaftChainReport,
+    val documents: int,
+    val skippedTables: array<string>
+)
+
+private val WHERE_BEFORE = 0
+private val WHERE_FILE = 1
+private val WHERE_SOURCES = 2
+private val WHERE_SECTION = 3
+private val WHERE_DONE = 4
+
+// saftRead and its checks a document at a time. The file isn't held: next() says what
+// came, which is then in this object's fields, good until the next call:
+//
+//   saftReadStart         header and masterFiles
+//   saftReadSection       section, entries, debit, credit, quantity: what it declares.
+//                         MovementOfGoods has its lines in entries.
+//   saftReadInvoice       invoice, and likewise movement, workDocument and payment
+//   saftReadSectionEnd    the same as saftReadSection, by then compared with the documents
+//   saftReadEnd           report() has it all
+//   saftReadError         `error` says why
+//
+// As far as the model allows, it holds one document at a time. What it keeps for the
+// whole read is the master files, one place per series, and the document numbers seen,
+// each under a limit of the options. The difference from saftRead with saftCheck and
+// saftVerifyChains: a file can only be taken in its own order, so Header and MasterFiles
+// must come before SourceDocuments, as the XSD says, and each series in sequence order
+// (see SaftChainChecker).
+class SaftStreamReader(
+    val xml: XmlReader,
+    val options: SaftStreamReadOptions,
+    val tree: SaftTreeReader,
+    val chain: SaftChainChecker,
+    val check: SaftStreamCheck,
+    var header: SaftHeader? = null,
+    var masterFiles: SaftMasterFiles? = null,
+    var invoice: SaftInvoice? = null,
+    var movement: SaftStockMovement? = null,
+    var workDocument: SaftWorkDocument? = null,
+    var payment: SaftPayment? = null,
+    var section: string = "",
+    var entries: int = 0,
+    var debit: SaftDecimal = saftDecimalZero(),
+    var credit: SaftDecimal = saftDecimalZero(),
+    var quantity: SaftDecimal = saftDecimalZero(),
+    var error: string = "",
+    var where: int = 0,
+    var started: bool = false,
+    var controls: XmlElement = XmlElement("", "", "", "", [], [], 0, 0, 0),
+    var controlBytes: int = 0,
+    var announced: bool = false,
+    val waiting: array<int> = array<int>(),
+    var documents: int = 0,
+    val skipped: array<string> = array<string>(),
+    val seenSections: array<string> = array<string>(),
+    var headerSeen: bool = false,
+    var masterSeen: bool = false
+) {
+    fun stop(message: string): void {
+        if (error == "") error = message
+        where = WHERE_DONE
+        xml.closeSource()
+        return
+    }
+
+    // What came next in the file. After the end or an error, the same again.
+    fun next(): int {
+        while (true) {
+            if (waiting.size > 0) {
+                val kind = waiting[0]
+                var i = 1
+                while (i < waiting.size) {
+                    waiting[i - 1] = waiting[i]
+                    i = i + 1
+                }
+                waiting.truncate(waiting.size - 1)
+                return kind
+            }
+            if (error != "") return saftReadError
+            if (where == WHERE_DONE) return saftReadEnd
+            val event = xml.next()
+            if (event.kind == xmlEventError) stop(xmlProblem())
+            else if (event.kind == xmlEventEndOfDocument) stop("the file ended early")
+            else if (event.kind == xmlEventStart) onStart(event)
+            else if (event.kind == xmlEventEnd) onEnd()
+        }
+        saftReadError
+    }
+
+    fun xmlProblem(): string {
+        val problem = xml.error
+        if (problem != null) return "not XML: ${problem.code} at ${problem.line}:${problem.column}: ${problem.message}"
+        "not XML"
+    }
+
+    fun onStart(event: XmlEvent): void {
+        if (where == WHERE_BEFORE) {
+            if (event.localName != "AuditFile") stop("the root element isn't AuditFile")
+            else if (event.namespaceUri != saftNamespace) stop("the namespace isn't $saftNamespace: \"${event.namespaceUri}\"")
+            else where = WHERE_FILE
+        } else if (where == WHERE_FILE) {
+            onFileChild(event)
+        } else if (where == WHERE_SOURCES) {
+            onSection(event)
+        } else {
+            onDocument(event)
+        }
+        return
+    }
+
+    fun onFileChild(event: XmlEvent): void {
+        val name = event.localName
+        if (name == "Header") {
+            val el = subtree(event, options.maxDocumentBytes, options.maxDocumentNodes, "", "Header")
+            if (el == null) return
+            if (headerSeen) {
+                problemAt(event, "duplicate", "a second Header")
+                return
+            }
+            headerSeen = true
+            val version = el.childText("AuditFileVersion")
+            if (version != saftAuditFileVersion) {
+                stop("the version is \"$version\", this reads $saftAuditFileVersion")
+                return
+            }
+            header = tree.header(el)
+        } else if (name == "MasterFiles") {
+            val el = subtree(event, options.maxMasterBytes, options.maxMasterNodes, "GeneralLedgerAccounts", "MasterFiles")
+            if (el == null) return
+            if (masterSeen) {
+                problemAt(event, "duplicate", "a second MasterFiles")
+                return
+            }
+            masterSeen = true
+            tree.known(el, "GeneralLedgerAccounts Customer Supplier Product TaxTable")
+            masterFiles = tree.masterFiles(el)
+        } else if (name == "GeneralLedgerEntries") {
+            noteSkipped("GeneralLedgerEntries")
+            skipElement()
+        } else if (name == "SourceDocuments") {
+            if (begin()) where = WHERE_SOURCES
+        } else {
+            problemAt(event, "unknown_element", "not expected inside AuditFile")
+            skipElement()
+        }
+        return
+    }
+
+    // With the header and master files in hand, the checks and the documents can start.
+    fun begin(): bool {
+        if (started) return true
+        val h = header
+        val m = masterFiles
+        if (h == null || m == null) {
+            stop("Header or MasterFiles is missing")
+            return false
+        }
+        started = true
+        if (options.check) check.begin(h, m)
+        waiting.append(saftReadStart)
+        true
+    }
+
+    fun onSection(event: XmlEvent): void {
+        val name = event.localName
+        if (name != "SalesInvoices" && name != "MovementOfGoods" && name != "WorkingDocuments" && name != "Payments") {
+            problemAt(event, "unknown_element", "not expected inside SourceDocuments")
+            skipElement()
+            return
+        }
+        for (done in seenSections) {
+            if (done == name) {
+                problemAt(event, "duplicate", "a second $name")
+                skipElement()
+                return
+            }
+        }
+        seenSections.append(name)
+        section = name
+        controls = XmlElement(event.name, event.prefix, event.localName, event.namespaceUri, event.attributes, [], event.byteOffset, event.line, event.column)
+        controlBytes = 0
+        announced = false
+        where = WHERE_SECTION
+        check.startSection()
+        return
+    }
+
+    fun documentName(): string = when (section) {
+        "SalesInvoices" -> "Invoice"
+        "MovementOfGoods" -> "StockMovement"
+        "WorkingDocuments" -> "WorkDocument"
+        else -> "Payment"
+    }
+
+    // Reads what a section declares into the fields. `final` reports what is missing.
+    fun declared(final: bool): void {
+        val el = controls
+        if (section == "MovementOfGoods") {
+            entries = if (final || el.child("NumberOfMovementLines") != null) tree.integer(el, "NumberOfMovementLines", 0, true) else 0
+            quantity = if (final || el.child("TotalQuantityIssued") != null) tree.amount(el, "TotalQuantityIssued") else saftDecimalZero()
+        } else {
+            entries = if (final || el.child("NumberOfEntries") != null) tree.integer(el, "NumberOfEntries", 0, true) else 0
+            debit = if (final || el.child("TotalDebit") != null) tree.amount(el, "TotalDebit") else saftDecimalZero()
+            credit = if (final || el.child("TotalCredit") != null) tree.amount(el, "TotalCredit") else saftDecimalZero()
+        }
+        return
+    }
+
+    // A section's own fields come before its documents, as the XSD has it, so a caller
+    // hears of them with the first document. One that comes later is still compared at
+    // the section's end. Its problems are the end's to report, once.
+    fun announce(): void {
+        if (announced) return
+        announced = true
+        val before = tree.issues.size
+        declared(false)
+        tree.issues.truncate(before)
+        waiting.append(saftReadSection)
+        return
+    }
+
+    fun onDocument(event: XmlEvent): void {
+        if (event.localName != documentName()) {
+            // A section's own field: small, but held to a document's limit all together.
+            val el = subtree(event, options.maxDocumentBytes - controlBytes, options.maxDocumentNodes, "", event.localName)
+            if (el == null) return
+            controlBytes = controlBytes + el.text().size + 64
+            controls.children.append(el)
+            return
+        }
+        announce()
+        val el = subtree(event, options.maxDocumentBytes, options.maxDocumentNodes, "", event.localName)
+        if (el == null) return
+        documents = documents + 1
+        if (section == "SalesInvoices") {
+            val d = tree.invoice(el)
+            if (options.check) check.invoice(d)
+            if (options.chains) chain.invoice(d)
+            invoice = d
+            waiting.append(saftReadInvoice)
+        } else if (section == "MovementOfGoods") {
+            val d = tree.movement(el)
+            if (options.check) check.movement(d)
+            if (options.chains) chain.movement(d)
+            movement = d
+            waiting.append(saftReadMovement)
+        } else if (section == "WorkingDocuments") {
+            val d = tree.workDocument(el)
+            if (options.check) check.workDocument(d)
+            if (options.chains) chain.workDocument(d)
+            workDocument = d
+            waiting.append(saftReadWorkDocument)
+        } else {
+            val d = tree.receipt(el)
+            if (options.check) check.payment(d)
+            payment = d
+            waiting.append(saftReadPayment)
+        }
+        drainTree()
+        return
+    }
+
+    // The tree reader's issues count in the check's, under its limit.
+    fun drainTree(): void {
+        for (issue in tree.issues) check.c.error(issue.code, issue.path, issue.message)
+        tree.issues.clear()
+        return
+    }
+
+    fun onEnd(): void {
+        if (where == WHERE_SECTION) {
+            announce()
+            tree.known(controls, if (section == "MovementOfGoods") "NumberOfMovementLines TotalQuantityIssued" else "NumberOfEntries TotalDebit TotalCredit")
+            declared(true)
+            drainTree()
+            if (options.check) {
+                if (section == "MovementOfGoods") check.endMovements(entries, quantity)
+                else check.endDebitCredit(section, entries, debit, credit)
+            }
+            waiting.append(saftReadSectionEnd)
+            where = WHERE_SOURCES
+        } else if (where == WHERE_SOURCES) {
+            where = WHERE_FILE
+        } else if (where == WHERE_FILE) {
+            if (!begin()) return
+            // What can follow the root is the XML reader's to judge.
+            while (where != WHERE_DONE) {
+                val after = xml.next()
+                if (after.kind == xmlEventError) stop(xmlProblem())
+                if (after.kind == xmlEventEndOfDocument) where = WHERE_DONE
+            }
+            drainTree()
+            if (error == "") waiting.append(saftReadEnd)
+        }
+        return
+    }
+
+    fun noteSkipped(name: string): void {
+        for (known in skipped) if (known == name) return
+        skipped.append(name)
+        return
+    }
+
+    fun problemAt(event: XmlEvent, code: string, message: string): void {
+        check.c.error(code, "line ${event.line}: ${event.localName}", message)
+        return
+    }
+
+    // Past an element whose start has just been read, holding nothing of it.
+    fun skipElement(): void {
+        var depth = 1
+        while (depth > 0) {
+            val event = xml.next()
+            if (event.kind == xmlEventError) {
+                stop(xmlProblem())
+                return
+            }
+            if (event.kind == xmlEventEndOfDocument) {
+                stop("the file ended early")
+                return
+            }
+            if (event.kind == xmlEventStart) depth = depth + 1
+            if (event.kind == xmlEventEnd) depth = depth - 1
+        }
+        return
+    }
+
+    // The element whose start has just been read, as a tree, up to limits: what can be
+    // held in memory is decided here. An error is null, with `error` set. A child named
+    // `skippedChild` is passed over and named in skippedTables.
+    fun subtree(start: XmlEvent, maxBytes: int, maxNodes: int, skippedChild: string, label: string): XmlElement? {
+        val root = XmlElement(start.name, start.prefix, start.localName, start.namespaceUri, start.attributes, [], start.byteOffset, start.line, start.column)
+        val open: array<XmlElement> = []
+        open.append(root)
+        var nodes = 1
+        while (open.size > 0) {
+            val event = xml.next()
+            val kind = event.kind
+            if (kind == xmlEventError) {
+                stop(xmlProblem())
+                return null
+            }
+            if (kind == xmlEventEndOfDocument) {
+                stop("the file ended early")
+                return null
+            }
+            nodes = nodes + 1
+            if (nodes > maxNodes || event.byteOffset - start.byteOffset > maxBytes) {
+                stop("$label at line ${start.line} is larger than $maxBytes bytes or $maxNodes nodes: raise the option if that is real")
+                return null
+            }
+            if (kind == xmlEventStart) {
+                if (open.size == 1 && event.localName == skippedChild) {
+                    noteSkipped(skippedChild)
+                    skipElement()
+                    if (error != "") return null
+                } else {
+                    val element = XmlElement(event.name, event.prefix, event.localName, event.namespaceUri, event.attributes, [], event.byteOffset, event.line, event.column)
+                    open[open.size - 1].children.append(element)
+                    open.append(element)
+                }
+            } else if (kind == xmlEventEnd) {
+                open.truncate(open.size - 1)
+            } else if (kind == xmlEventText) {
+                open[open.size - 1].children.append(XmlText(event.value))
+            } else if (kind == xmlEventCdata) {
+                open[open.size - 1].children.append(XmlText(event.value, true))
+            }
+        }
+        root
+    }
+
+    // Everything found so far, and all of it once saftReadEnd has come.
+    fun report(): SaftStreamReport {
+        val names: array<string> = []
+        for (name in skipped) names.append(name)
+        SaftStreamReport(error == "" && check.c.errors == 0, error, check.issues(), check.c.errors, check.c.warnings, check.c.dropped, chain.report(), documents, names)
+    }
+}
+
+// A reader of the SAF-T file in `source`. See SaftStreamReader.
+fun saftStreamReader(source: XmlSource, options: SaftStreamReadOptions = SaftStreamReadOptions()): SaftStreamReader {
+    val xml = xmlChunkedReader(source, XmlOptions(maxBytes = options.maxBytes, maxNodes = options.maxBytes))
+    SaftStreamReader(xml, options, SaftTreeReader(array<SaftIssue>()), saftChainChecker(options.key, options.maxSeries, options.maxIssues), saftBlankCheck(options.maxIssues, options.maxNumbers))
 }
