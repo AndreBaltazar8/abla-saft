@@ -1,0 +1,59 @@
+// Issues one signed invoice and writes the SAF-T file and its QR code.
+// invoice <private key PEM> <output dir>. The key is yours: openssl genrsa -out key.pem 1024
+import "../src/saft.ab"
+import "abla/fs"
+import "abla/io"
+import "abla/process"
+
+fun main: int {
+    val made = saftRsaSignerFromPem(path(processArgument(0)).readText(), 1)
+    val signer = made.signer
+    if (signer == null) {
+        eprintln(made.error)
+        return 1
+    }
+    val dir = processArgument(1)
+
+    val address = SaftAddress("Rua das Flores, 12", "Coimbra", "3000-123", "PT")
+    val header = SaftHeader("599999993", "599999993", "Exemplo, Lda.", address, 2026, "2026-01-01", "2026-12-31", "2026-03-31",
+        "599999993", "Exemplo/Exemplo, Lda.", "1.0")
+    val master = SaftMasterFiles(
+        [SaftCustomer("C1", "500000000", "Cliente, S.A.", address)],
+        array<SaftSupplier>(),
+        [SaftProduct("S", "S1", "Consultoria", "S1")],
+        [SaftTaxEntry("IVA", "PT", "NOR", "Taxa normal", percentage = dec("23"))])
+
+    val lines = [SaftLine(1, "S1", "Consultoria", dec("2"), "H", dec("50.00"), "Consultoria em março",
+        creditAmount = dec("100.00"), tax = SaftTax("IVA", "PT", "NOR", percentage = dec("23")), taxPointDate = "2026-03-14")]
+    val number = "FT 2026/1"
+    // "ABCD1234" stands for the validation code AT gives when the series is communicated.
+    val invoice = SaftInvoice(number, saftAtcud("ABCD1234", number), SaftDocumentStatus("N", "2026-03-14T10:20:30", "ana"), "2026-03-14", "FT",
+        "ana", "2026-03-14T10:20:30", "C1", lines, saftComputeTotals(lines))
+
+    // "" for the first of a series; afterwards, the previous document's Hash.
+    val signature = saftSignInvoice(invoice, signer, "")
+    if (!signature.ok) {
+        eprintln(signature.error)
+        return 1
+    }
+    println("Printed characters: " + saftPrintedCharacters(invoice.hash))
+
+    val file = SaftFile(header, master, salesInvoices = saftSalesInvoices([invoice]))
+    val written = saftWrite(file)
+    if (!written.succeeded) {
+        for (issue in written.issues) eprintln("${issue.path}: ${issue.message}")
+        return 1
+    }
+    path(dir + "/saft.xml").writeText(written.text)
+
+    val qr = saftQrForInvoice(file, invoice)
+    if (!qr.ok) {
+        eprintln(qr.error)
+        return 1
+    }
+    val image = saftQrImage(qr.message)
+    path(dir + "/qr.png").writeText(image.png)
+    println(saftAtcudPrinted(invoice.atcud))
+    println(qr.message)
+    0
+}

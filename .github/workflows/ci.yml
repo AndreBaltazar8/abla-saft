@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+      - uses: AndreBaltazar8/setup-abla@b21e1290aa49862e7bf187dc84b6b3511f4b571e # v1.0.0
+        with:
+          version: '0.2.25'
+      - name: Unit, golden and property tests
+        run: make test-in-shell COMPILER=ablac
+      - name: Build tools and the example
+        run: make programs-in-shell COMPILER=ablac
+      - name: Download AT's schema, demonstration file and texts, by hash
+        run: tools/fetch-sources.sh
+      - name: Generated files through the official XSD and xmllint, decimals against Python
+        run: nix-shell -p libxml2 'python3.withPackages(p: [p.xmlschema])' --run 'tools/check-all.sh 200'
+      - name: Signatures against openssl, QR images through zbar
+        run: nix-shell -p openssl zbar 'python3.withPackages(p: [p.xmlschema])' --run tools/check-signatures.sh
+      - name: AT's demonstration file through the XSD, reader and writer
+        run: nix-shell -p libxml2 'python3.withPackages(p: [p.xmlschema])' --run tools/check-at-demo.sh
