@@ -1,0 +1,100 @@
+import "../src/saft.ab"
+import "support/samples.ab"
+import "abla/fs"
+import "abla/test"
+import "abla/text"
+
+fun readError(source: string, needle: string, label: string): void {
+    val r = saftRead(source)
+    expect(r.file == null, "$label isn't read")
+    expect(r.error.contains(needle), "$label: ${r.error}")
+    return
+}
+
+fun issue(source: string, code: string, label: string): void {
+    val r = saftRead(source)
+    var found = false
+    for (i in r.issues) if (i.code == code) found = true
+    expect(found, "$label reports $code")
+    return
+}
+
+fun main: int {
+    // Golden files read back to the same bytes, and to no complaints.
+    for (g in goldenFiles()) {
+        val text = path("tests/golden/" + g.name + ".xml").readText()
+        val r = saftRead(text)
+        val file = r.file
+        if (expect(file != null, g.name + " reads: " + r.error) && file != null) {
+            expectEqual(r.issues.size, 0, g.name + " read issues")
+            expect(!saftHasErrors(saftCheck(file)), g.name + " checks")
+            expect(saftWrite(file).text == text, g.name + " rewrites the same")
+        }
+    }
+
+    val text = path("tests/golden/cancelled.xml").readText()
+    val whole = saftRead(text).file
+    if (expect(whole != null, "cancelled reads") && whole != null) {
+        val sales = whole.salesInvoices
+        if (expect(sales != null, "invoices") && sales != null) {
+            expectEqual(sales.invoices[1].status.status, "A", "status")
+            expectEqual(sales.invoices[1].status.reason, "Erro de digitação", "UTF-8 from Windows-1252")
+            expectEqual(sales.numberOfEntries, 3, "count")
+            expect(sales.invoices[0].lines[1].quantity.text() == "1.5", "quantity keeps its digits")
+        }
+        expectEqual(whole.header.businessName, "Açúcar é Bom", "accents")
+    }
+
+    val foreign = saftRead(path("tests/golden/foreign-currency.xml").readText()).file
+    if (expect(foreign != null, "foreign reads") && foreign != null) {
+        val sales = foreign.salesInvoices
+        if (sales != null) {
+            val c = sales.invoices[0].totals.currency
+            if (expect(c != null, "currency") && c != null) {
+                expectEqual(c.currencyCode, "USD", "currency code")
+                expectEqual(c.exchangeRate.text(), "0.74075", "rate")
+            }
+            expectEqual(sales.invoices[0].withholding[0].withholdingTaxType, "IRS", "withholding")
+            expectEqual(sales.invoices[0].totals.settlements[0].paymentTerms, "30 dias", "settlement")
+            expectEqual(sales.invoices[0].totals.payments[0].paymentMechanism, "CC", "payment")
+        }
+    }
+
+    val goods = saftRead(path("tests/golden/movement-GT.xml").readText()).file
+    if (goods != null) {
+        val m = goods.movementOfGoods
+        if (m != null) {
+            val from = m.movements[0].shipFrom
+            if (expect(from != null, "shipFrom") && from != null) {
+                expectEqual(from.warehouses.size, 2, "warehouses")
+                expectEqual(from.warehouses[0].locationId, "Prateleira 2", "location")
+                expectEqual(from.warehouses[1].warehouseId, "ARM2", "warehouse without location")
+            }
+        }
+    }
+
+    // Not this format.
+    readError("", "not XML", "an empty file")
+    readError("<a>", "not XML", "bad XML")
+    readError("<a/>", "root", "another document")
+    readError("<AuditFile/>", "namespace", "no namespace")
+    readError("<AuditFile xmlns=\"$saftNamespace\"/>", "missing", "no header")
+    readError(text.replace("<AuditFileVersion>1.04_01", "<AuditFileVersion>1.03_01"), "version", "another version")
+    readError("<!DOCTYPE AuditFile [<!ENTITY a \"b\">]><AuditFile xmlns=\"$saftNamespace\"/>", "dtd", "a DTD")
+
+    // Wrong inside.
+    issue(text.replace("<City>Coimbra</City>", "<Town>Coimbra</Town>"), "unknown_element", "a misnamed field")
+    issue(text.replace("<City>Coimbra</City>", ""), "required", "a missing field")
+    issue(text.replace("<Quantity>2</Quantity>", "<Quantity>dois</Quantity>"), "bad_decimal", "a bad decimal")
+    issue(text.replace("<Quantity>2</Quantity>", "<Quantity>1e3</Quantity>"), "bad_decimal", "an exponent")
+    issue(text.replace("<LineNumber>1</LineNumber>", "<LineNumber>um</LineNumber>"), "bad_integer", "a bad integer")
+
+    // A file changed after writing: the check catches the totals.
+    val edited = saftRead(text.replace("<TotalCredit>", "<TotalCredit>1")).file
+    if (expect(edited != null, "edited reads") && edited != null) {
+        var found = false
+        for (i in saftCheck(edited)) if (i.code == "control_total") found = true
+        expect(found, "an edited control total is caught")
+    }
+    testsPassed()
+}

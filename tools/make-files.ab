@@ -1,0 +1,94 @@
+// Writes files for the external checks: make-files <dir> <generated count>. In valid/, the
+// golden scenarios and generated files. In invalid/, files that the check refuses, written
+// anyway. Exits 1 if the check misses one, or passes anything it shouldn't.
+import "../src/saft.ab"
+import "../tests/support/samples.ab"
+import "abla/fs"
+import "abla/io"
+import "abla/process"
+import "abla/text"
+
+private var failures = 0
+
+fun addValid(dir: string, name: string, file: SaftFile): void {
+    val r = saftWrite(file)
+    if (!r.succeeded) {
+        eprintln("$name: ${r.errorMessage}")
+        for (i in r.issues) if (i.severity == saftSeverityError) eprintln("  ${i.path}: ${i.message}")
+        failures = failures + 1
+        return
+    }
+    path(dir + "/valid/" + name + ".xml").writeText(r.text)
+    return
+}
+
+fun addInvalid(dir: string, name: string, file: SaftFile): void {
+    if (!saftHasErrors(saftCheck(file))) {
+        eprintln("$name: the check found nothing")
+        failures = failures + 1
+    }
+    val r = saftWrite(file, SaftWriteOptions(unchecked = true))
+    if (!r.succeeded) {
+        eprintln("$name: the XML writer refused it: ${r.errorMessage}")
+        failures = failures + 1
+        return
+    }
+    path(dir + "/invalid/" + name + ".xml").writeText(r.text)
+    return
+}
+
+fun invoiceFile(d: SaftInvoice): SaftFile = fileWith(sales = saftSalesInvoices([d]))
+
+fun invalidFiles(dir: string): void {
+    val long = "x".repeat(101)
+    val h = sampleHeader()
+    val master = sampleMaster()
+    val ok = stdLines()
+    addInvalid(dir, "company-name-too-long", SaftFile(SaftHeader(h.companyId, h.taxRegistrationNumber, long, h.companyAddress, h.fiscalYear, h.startDate, h.endDate, h.dateCreated, h.productCompanyTaxId, h.productId, h.productVersion), master))
+    addInvalid(dir, "nif-short", SaftFile(SaftHeader(h.companyId, "12345", h.companyName, h.companyAddress, h.fiscalYear, h.startDate, h.endDate, h.dateCreated, h.productCompanyTaxId, h.productId, h.productVersion), master))
+    addInvalid(dir, "product-id-no-slash", SaftFile(SaftHeader(h.companyId, h.taxRegistrationNumber, h.companyName, h.companyAddress, h.fiscalYear, h.startDate, h.endDate, h.dateCreated, h.productCompanyTaxId, "abla-saft", h.productVersion), master))
+    addInvalid(dir, "bad-country", SaftFile(SaftHeader(h.companyId, h.taxRegistrationNumber, h.companyName, SaftAddress("R", "C", "1", "XX"), h.fiscalYear, h.startDate, h.endDate, h.dateCreated, h.productCompanyTaxId, h.productId, h.productVersion), master))
+    addInvalid(dir, "bad-date", SaftFile(SaftHeader(h.companyId, h.taxRegistrationNumber, h.companyName, h.companyAddress, h.fiscalYear, "2026-02-30", h.endDate, h.dateCreated, h.productCompanyTaxId, h.productId, h.productVersion), master))
+    addInvalid(dir, "negative-amount", invoiceFile(invoiceOf("FT", "A", 1, "C1", [saleLine(1, "1", "-5", vat("PT", "NOR", "23"))])))
+    addInvalid(dir, "zero-rate-no-reason", invoiceFile(invoiceOf("FT", "A", 1, "C1", [saleLine(1, "1", "5", vat("PT", "ISE", "0"))])))
+    addInvalid(dir, "rate-with-reason", invoiceFile(invoiceOf("FT", "A", 1, "C1", [saleLine(1, "1", "5", vat("PT", "NOR", "23"), "Artigo 9.º", "M07")])))
+    addInvalid(dir, "reason-without-code", invoiceFile(invoiceOf("FT", "A", 1, "C1", [saleLine(1, "1", "5", vat("PT", "ISE", "0"), "Artigo 9.º do CIVA")])))
+    addInvalid(dir, "short-reason", invoiceFile(invoiceOf("FT", "A", 1, "C1", [saleLine(1, "1", "5", vat("PT", "ISE", "0"), "Art 9", "M07")])))
+    addInvalid(dir, "bad-exemption-code", invoiceFile(invoiceOf("FT", "A", 1, "C1", [saleLine(1, "1", "5", vat("PT", "ISE", "0"), "Artigo 9.º do CIVA", "X07")])))
+    addInvalid(dir, "unknown-customer", invoiceFile(invoiceOf("FT", "A", 1, "NOPE", ok)))
+    addInvalid(dir, "unknown-product", invoiceFile(invoiceOf("FT", "A", 1, "C1", [SaftLine(1, "NOPE", "Pão", dec("1"), "UN", dec("1"), "x", creditAmount = dec("1"), tax = vat("PT", "NOR", "23"), taxPointDate = "2026-03-14")])))
+    addInvalid(dir, "both-debit-and-credit", invoiceFile(invoiceOf("FT", "A", 1, "C1", [SaftLine(1, "P1", "Pão", dec("1"), "UN", dec("1"), "x", debitAmount = dec("1"), creditAmount = dec("1"), tax = vat("PT", "NOR", "23"), taxPointDate = "2026-03-14")])))
+    addInvalid(dir, "no-tax-on-invoice-line", invoiceFile(invoiceOf("FT", "A", 1, "C1", [saleLine(1, "1", "5", null)])))
+    addInvalid(dir, "tax-base-with-price", invoiceFile(invoiceOf("FT", "A", 1, "C1", [SaftLine(1, "P1", "Pão", dec("1"), "UN", dec("1"), "x", creditAmount = dec("0"), taxBase = dec("9"), tax = vat("PT", "NOR", "23"), taxPointDate = "2026-03-14")])))
+    addInvalid(dir, "no-lines", invoiceFile(invoiceOf("FT", "A", 1, "C1", array<SaftLine>())))
+    addInvalid(dir, "bad-document-number", invoiceFile(SaftInvoice("FT1", "0", normalStatus(), "2026-03-14", "FT", "ana", "2026-03-14T10:20:30", "C1", ok, saftComputeTotals(ok))))
+    addInvalid(dir, "bad-status", invoiceFile(invoiceOf("FT", "A", 1, "C1", ok, normalStatus("Q"))))
+    addInvalid(dir, "bad-type", invoiceFile(invoiceOf("XX", "A", 1, "C1", ok)))
+    val twoSeries = invoiceOf("FT", "A", 1, "C1", ok)
+    addInvalid(dir, "duplicate-number", fileWith(sales = saftSalesInvoices([twoSeries, invoiceOf("FT", "A", 1, "C1", ok)])))
+    val tooLongHash = invoiceOf("FT", "A", 1, "C1", ok)
+    tooLongHash.hash = "A".repeat(173)
+    addInvalid(dir, "hash-too-long", invoiceFile(tooLongHash))
+    val badControl = invoiceOf("FT", "A", 1, "C1", ok)
+    badControl.hashControl = "versão"
+    addInvalid(dir, "bad-hash-control", invoiceFile(badControl))
+    addInvalid(dir, "movement-both-parties", fileWith(goods = saftMovementOfGoods([SaftStockMovement("GT A/1", "0", normalStatus(), "2026-03-14", "GT", "ana", "2026-03-14T10:20:30", "2026-03-14T11:00:00", stdMovementLines(), saftComputeTotals(stdMovementLines()), customerId = "C1", supplierId = "S1")])))
+    val noTax = SaftPaymentLine(1, [SaftSourceDocument("FT A/1", "2026-03-14")], creditAmount = dec("10"))
+    addInvalid(dir, "cash-vat-receipt-no-tax", fileWith(payments = saftPayments([SaftPayment("RC A/1", "0", "2026-03-15", "RC", normalStatus(), "ana", "2026-03-15T09:00:00", "C1", [noTax], SaftDocumentTotals(dec("0"), dec("10"), dec("10")))])))
+    addInvalid(dir, "timestamp-with-zone-and-bad-month", invoiceFile(SaftInvoice("FT A/1", "0", normalStatus(), "2026-03-14", "FT", "ana", "2026-13-14T10:20:30", "C1", ok, saftComputeTotals(ok))))
+    return
+}
+
+fun main: int {
+    val dir = processArgument(0)
+    val count = processArgumentCount() > 1
+    path(dir + "/valid").createDirectories()
+    path(dir + "/invalid").createDirectories()
+    for (g in goldenFiles()) addValid(dir, g.name, g.file)
+    var generated = 0
+    if (count) for (c in processArgument(1)) generated = generated * 10 + (c - 48)
+    for (seed in 1 until generated + 1) addValid(dir, "generated-$seed", generatedFile(seed, FakeSigner()))
+    invalidFiles(dir)
+    if (failures > 0) return 1
+    0
+}

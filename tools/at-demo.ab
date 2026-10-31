@@ -1,0 +1,48 @@
+// AT's demonstration file: reads it, checks it, walks its chains and writes it back.
+// at-demo <file> <output>. Prints every issue and exits 1 on an error-severity issue,
+// a read problem, or a chain problem. Its signatures can't be verified: AT's demonstration
+// key isn't published.
+import "../src/saft.ab"
+import "abla/fs"
+import "abla/io"
+import "abla/process"
+
+fun main: int {
+    val source = path(processArgument(0)).readText()
+    val read = saftRead(source)
+    val file = read.file
+    if (file == null) {
+        eprintln(read.error)
+        return 1
+    }
+    var bad = 0
+    for (i in read.issues) {
+        eprintln("read: ${i.code} ${i.path} ${i.message}")
+        bad = bad + 1
+    }
+    var warnings = 0
+    for (i in saftCheck(file)) {
+        if (i.severity == saftSeverityError) {
+            eprintln("check: ${i.code} ${i.path} ${i.message}")
+            bad = bad + 1
+        } else warnings = warnings + 1
+    }
+    val chains = saftVerifyChains(file)
+    for (p in chains.problems) {
+        eprintln("chain: ${p.code} ${p.document} ${p.message}")
+        bad = bad + 1
+    }
+    var skipped = ""
+    for (t in file.skippedTables) skipped = skipped + " " + t
+    println("read ${source.size} bytes; $warnings warnings; skipped:$skipped")
+    val sales = file.salesInvoices
+    if (sales != null) println("invoices ${sales.invoices.size}, debit ${sales.totalDebit.text()}, credit ${sales.totalCredit.text()}")
+    val written = saftWrite(file)
+    if (!written.succeeded) {
+        eprintln("write: ${written.errorMessage}")
+        return 1
+    }
+    path(processArgument(1)).writeText(written.text)
+    if (bad > 0) return 1
+    0
+}

@@ -1,0 +1,296 @@
+// Documents the tests write. All the people and numbers are invented; 599999993 is the
+// NIF of AT's own demonstration file. Rates here are examples for the arithmetic: the
+// library takes rates as data and doesn't assert any as current law.
+import "../../src/saft.ab"
+import "abla/bytes"
+import "abla/crypto"
+import "abla/text"
+
+val sampleCertificate = 0
+
+class FakeSigner(val version: int = 1) : SaftSigner {
+    fun keyVersion(): int = version
+
+    // Deterministic 128 bytes from SHA-1, so golden files hold no real key's work. It's
+    // not a signature: no RSA key could verify it.
+    fun sign(message: string): string {
+        val out = byteBuffer()
+        var block = sha1(message)
+        while (out.size() < saftSignatureBytes) {
+            out.appendText(block)
+            block = sha1(block)
+        }
+        out.toText().slice(0, saftSignatureBytes)
+    }
+}
+
+fun sampleAddress(country: string = "PT"): SaftAddress =
+    SaftAddress("Rua das Flores, 12 - 1.º", "Coimbra", "3000-123", country, streetName = "Rua das Flores", buildingNumber = "12", region = "Coimbra")
+
+fun sampleHeader(year: int = 2026): SaftHeader =
+    SaftHeader("Conservatória de Coimbra 1234/56", "599999993", "Exemplo & Companhia, Lda.", sampleAddress(), year,
+        "$year-01-01", "$year-12-31", "$year-12-31", "599999993", "abla-saft tests/Exemplo", "0.1.0", businessName = "Açúcar é Bom", email = "geral@example.pt")
+
+fun sampleCustomers(): array<SaftCustomer> {
+    val out: array<SaftCustomer> = []
+    out.append(SaftCustomer("CF", saftFinalConsumerTaxId, "Consumidor final",
+        SaftAddress(saftUnknown, saftUnknown, saftUnknown, saftUnknown)))
+    out.append(SaftCustomer("C1", "500000000", "Cliente Português, S.A.", sampleAddress(), telephone = "+351 239 000 000"))
+    out.append(SaftCustomer("C2", "4443332215", "Client Français SARL",
+        SaftAddress("1 Rue de la Paix", "Paris", "75002", "FR"), accountId = "2111"))
+    out
+}
+
+fun sampleSuppliers(): array<SaftSupplier> {
+    val out: array<SaftSupplier> = []
+    out.append(SaftSupplier("S1", "500000000", "Fornecedor, Lda.", sampleAddress()))
+    out
+}
+
+fun sampleProducts(): array<SaftProduct> {
+    val out: array<SaftProduct> = []
+    out.append(SaftProduct("P", "P1", "Pão de ló", "5601234567890", cnCodes = ["19059090"]))
+    out.append(SaftProduct("S", "S1", "Serviço de consultoria", "S1", productGroup = "Serviços"))
+    out
+}
+
+fun sampleTaxTable(): array<SaftTaxEntry> {
+    val out: array<SaftTaxEntry> = []
+    out.append(SaftTaxEntry("IVA", "PT", "NOR", "Taxa normal", percentage = dec("23")))
+    out.append(SaftTaxEntry("IVA", "PT", "INT", "Taxa intermédia", percentage = dec("13")))
+    out.append(SaftTaxEntry("IVA", "PT", "RED", "Taxa reduzida", percentage = dec("6")))
+    out.append(SaftTaxEntry("IVA", "PT", "ISE", "Isenta", percentage = dec("0")))
+    out.append(SaftTaxEntry("IVA", "PT-AC", "NOR", "Taxa normal Açores", percentage = dec("16")))
+    out.append(SaftTaxEntry("IVA", "PT-MA", "NOR", "Taxa normal Madeira", percentage = dec("22")))
+    out.append(SaftTaxEntry("IS", "PT", "1.1", "Verba 1.1", amount = dec("5.00")))
+    out.append(SaftTaxEntry("NS", "PT", "NS", "Não sujeito", percentage = dec("0")))
+    out
+}
+
+fun sampleMaster(): SaftMasterFiles = SaftMasterFiles(sampleCustomers(), sampleSuppliers(), sampleProducts(), sampleTaxTable())
+
+fun vat(region: string, code: string, rate: string): SaftTax = SaftTax("IVA", region, code, percentage = dec(rate))
+
+// A credit line, as a sale.
+fun saleLine(number: int, quantity: string, price: string, tax: SaftTax?, reason: string = "", code: string = ""): SaftLine =
+    SaftLine(number, "P1", "Pão de ló", dec(quantity), "UN", dec(price), "Pão de ló, inteiro", creditAmount = dec(quantity).times(dec(price)),
+        tax = tax, taxPointDate = "2026-03-14", taxExemptionReason = reason, taxExemptionCode = code)
+
+// A debit line, as a credit note has.
+fun refundLine(number: int, quantity: string, price: string, tax: SaftTax?, original: string): SaftLine =
+    SaftLine(number, "P1", "Pão de ló", dec(quantity), "UN", dec(price), "Devolução", debitAmount = dec(quantity).times(dec(price)),
+        tax = tax, taxPointDate = "2026-03-14", references = [SaftLineReference(original, "Devolução")])
+
+fun normalStatus(status: string = "N", reason: string = ""): SaftDocumentStatus =
+    SaftDocumentStatus(status, "2026-03-14T10:20:30", "ana", reason = reason)
+
+fun invoiceOf(type: string, series: string, sequence: int, customer: string, lines: array<SaftLine>, status: SaftDocumentStatus = normalStatus()): SaftInvoice {
+    val number = "$type $series/$sequence"
+    SaftInvoice(number, saftAtcud("ABCD1234", number), status, "2026-03-14", type, "ana", "2026-03-14T10:20:30", customer, lines, saftComputeTotals(lines))
+}
+
+fun movementOf(type: string, sequence: int, lines: array<SaftLine>, status: SaftDocumentStatus = normalStatus()): SaftStockMovement {
+    val number = "$type A/$sequence"
+    val totals = saftComputeTotals(lines)
+    val supplierSide = type == "GD"
+    SaftStockMovement(number, saftAtcud("MOVE1234", number), status, "2026-03-14", type, "ana", "2026-03-14T10:20:30", "2026-03-14T11:00:00", lines, totals,
+        customerId = if (supplierSide) "" else "C1", supplierId = if (supplierSide) "S1" else "",
+        shipFrom = SaftShippingPoint(deliveryIds = ["AA-00-BB"], deliveryDate = "2026-03-14", warehouses = [SaftWarehouse("ARM1", "Prateleira 2"), SaftWarehouse("ARM2")], address = sampleAddress()),
+        shipTo = SaftShippingPoint(address = SaftAddress("Rua Larga, 5", "Porto", "4000-001", "PT")))
+}
+
+fun workOf(type: string, sequence: int, lines: array<SaftLine>, status: SaftDocumentStatus = normalStatus()): SaftWorkDocument {
+    val number = "$type A/$sequence"
+    SaftWorkDocument(number, saftAtcud("WORK1234", number), status, "2026-03-14", type, "ana", "2026-03-14T10:20:30", "C1", lines, saftComputeTotals(lines))
+}
+
+fun paymentOf(type: string, sequence: int, gross: string, status: SaftDocumentStatus = normalStatus()): SaftPayment {
+    val number = "$type A/$sequence"
+    val base = dec(gross).dividedBy(dec("1.23"), 2)
+    val tax = dec(gross).minus(base)
+    val line = SaftPaymentLine(1, [SaftSourceDocument("FT A/1", "2026-03-14")], creditAmount = base, tax = vat("PT", "NOR", "23"))
+    SaftPayment(number, saftAtcud("RECB1234", number), "2026-03-15", type, status, "ana", "2026-03-15T09:00:00", "C1", [line],
+        SaftDocumentTotals(tax, base, dec(gross)), methods = [SaftPaymentMethod(dec(gross), "2026-03-15", "TB")])
+}
+
+fun stdLines(): array<SaftLine> {
+    val out: array<SaftLine> = []
+    out.append(saleLine(1, "2", "10.50", vat("PT", "NOR", "23")))
+    out.append(saleLine(2, "1.5", "3.3333", vat("PT", "RED", "6")))
+    out
+}
+
+fun fileWith(sales: SaftSalesInvoices? = null, goods: SaftMovementOfGoods? = null, work: SaftWorkingDocuments? = null, payments: SaftPayments? = null): SaftFile =
+    SaftFile(sampleHeader(), sampleMaster(), sales, goods, work, payments)
+
+fun oneInvoice(type: string): SaftFile {
+    val d = if (type == "NC") invoiceOf(type, "A", 1, "C1", [refundLine(1, "1", "10.50", vat("PT", "NOR", "23"), "FT A/1")])
+    else invoiceOf(type, "A", 1, if (type == "FS") "CF" else "C1", stdLines())
+    saftSignInvoice(d, FakeSigner(), "")
+    fileWith(sales = saftSalesInvoices([d]))
+}
+
+fun oneMovement(type: string): SaftFile {
+    val d = movementOf(type, 1, stdMovementLines())
+    saftSignMovement(d, FakeSigner(), "")
+    fileWith(goods = saftMovementOfGoods([d]))
+}
+
+fun stdMovementLines(): array<SaftLine> {
+    val out: array<SaftLine> = []
+    out.append(SaftLine(1, "P1", "Pão de ló", dec("5"), "UN", dec("0"), "Transporte", creditAmount = dec("0.00"), tax = vat("PT", "NOR", "23")))
+    out.append(SaftLine(2, "P1", "Pão de ló", dec("2.5"), "KG", dec("4.00"), "Transporte", debitAmount = dec("10.00")))
+    out
+}
+
+fun oneWork(type: string): SaftFile {
+    val d = workOf(type, 1, stdLines())
+    saftSignWorkDocument(d, FakeSigner(), "")
+    fileWith(work = saftWorkingDocuments([d]))
+}
+
+fun onePayment(type: string): SaftFile = fileWith(payments = saftPayments([paymentOf(type, 1, "123.00")]))
+
+// The scenarios the golden files cover beyond one document of each type.
+fun regionsFile(): SaftFile {
+    val lines: array<SaftLine> = []
+    lines.append(saleLine(1, "1", "100", vat("PT", "NOR", "23")))
+    lines.append(saleLine(2, "1", "100", vat("PT-AC", "NOR", "16")))
+    lines.append(saleLine(3, "1", "100", vat("PT-MA", "NOR", "22")))
+    lines.append(saleLine(4, "2", "0.03", vat("PT-MA", "INT", "12")))
+    val d = invoiceOf("FT", "R", 1, "C1", lines)
+    saftSignInvoice(d, FakeSigner(), "")
+    fileWith(sales = saftSalesInvoices([d]))
+}
+
+fun exemptionFile(): SaftFile {
+    val lines: array<SaftLine> = []
+    lines.append(saleLine(1, "1", "50", vat("PT", "ISE", "0"), "Artigo 9.º do CIVA", "M07"))
+    lines.append(saleLine(2, "1", "50", SaftTax("NS", "PT", "NS", percentage = dec("0")), "Não sujeito; não tributado", "M99"))
+    lines.append(saleLine(3, "3", "10", SaftTax("IS", "PT", "1.1", amount = dec("5.00"))))
+    lines.append(saleLine(4, "1", "40", vat("FR", "NOR", "20")))
+    val d = invoiceOf("FT", "E", 1, "C2", lines)
+    saftSignInvoice(d, FakeSigner(), "")
+    fileWith(sales = saftSalesInvoices([d]))
+}
+
+fun foreignCurrencyFile(): SaftFile {
+    val lines = stdLines()
+    val totals = saftComputeTotals(lines)
+    val rate = dec("0.74075")
+    val inForeign = totals.grossTotal.dividedBy(rate, 2)
+    val d = SaftInvoice("FT U/1", saftAtcud("ABCD1234", "FT U/1"), normalStatus(), "2026-03-14", "FT", "ana", "2026-03-14T10:20:30", "C2", lines,
+        SaftDocumentTotals(totals.taxPayable, totals.netTotal, totals.grossTotal, SaftCurrency("USD", inForeign, rate),
+            settlements = [SaftSettlement("2% a 10 dias", dec("0.50"), "2026-03-24", "30 dias")],
+            payments = [SaftPaymentMethod(totals.grossTotal, "2026-03-20", "CC")]),
+        withholding = [SaftWithholding(dec("1.25"), "IRS", "Artigo 101.º do CIRS")])
+    saftSignInvoice(d, FakeSigner(), "")
+    fileWith(sales = saftSalesInvoices([d]))
+}
+
+fun cancelledFile(): SaftFile {
+    val first = invoiceOf("FT", "C", 1, "C1", stdLines())
+    val second = invoiceOf("FT", "C", 2, "C1", stdLines(), normalStatus("A", "Erro de digitação"))
+    val third = invoiceOf("FT", "C", 3, "C1", stdLines())
+    val r1 = saftSignInvoice(first, FakeSigner(), "")
+    val r2 = saftSignInvoice(second, FakeSigner(), r1.hash)
+    saftSignInvoice(third, FakeSigner(), r2.hash)
+    val goods = movementOf("GT", 1, stdMovementLines(), normalStatus("A", "Anulada"))
+    saftSignMovement(goods, FakeSigner(), "")
+    val work = workOf("PF", 1, stdLines(), normalStatus("A", "Anulada"))
+    saftSignWorkDocument(work, FakeSigner(), "")
+    fileWith(sales = saftSalesInvoices([first, second, third]), goods = saftMovementOfGoods([goods]), work = saftWorkingDocuments([work]),
+        payments = saftPayments([paymentOf("RG", 1, "61.50", normalStatus("A", "Anulado")), paymentOf("RG", 2, "24.60")]))
+}
+
+class Named(val name: string, val file: SaftFile)
+
+fun goldenFiles(): array<Named> {
+    val out: array<Named> = []
+    for (t in ["FT", "FS", "FR", "ND", "NC"]) out.append(Named("invoice-" + t, oneInvoice(t)))
+    for (t in ["GR", "GT", "GA", "GC", "GD"]) out.append(Named("movement-" + t, oneMovement(t)))
+    for (t in ["CM", "CC", "FC", "FO", "NE", "OU", "OR", "PF", "DC"]) out.append(Named("work-" + t, oneWork(t)))
+    for (t in ["RC", "RG"]) out.append(Named("receipt-" + t, onePayment(t)))
+    out.append(Named("regions", regionsFile()))
+    out.append(Named("exemptions", exemptionFile()))
+    out.append(Named("foreign-currency", foreignCurrencyFile()))
+    out.append(Named("cancelled", cancelledFile()))
+    out
+}
+
+// A repeatable generator, so a failure repeats.
+class Random(var state: int) {
+    fun next(limit: int): int {
+        state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+        (state >>> 8) % limit
+    }
+}
+
+private fun amountText(var r: Random, whole: int, places: int): string {
+    var out = "${r.next(whole)}"
+    if (places > 0) {
+        out = out + "."
+        for (i in 0 until places) out = out + "${r.next(10)}"
+    }
+    out
+}
+
+fun randomText(var r: Random): string {
+    val pieces = ["Pão", "Maçã", "açaí", "&", "<ok>", "\"x\"", "€5", "日本語", "😀", "O'Brien", "ção", "]]>"]
+    pieces[r.next(pieces.size)] + " " + pieces[r.next(pieces.size)]
+}
+
+fun randomTax(var r: Random): SaftTax {
+    val regions = ["PT", "PT-AC", "PT-MA"]
+    val codes = ["RED", "INT", "NOR"]
+    val rates = ["6", "13", "23", "22", "16", "4", "9", "12"]
+    vat(regions[r.next(3)], codes[r.next(3)], rates[r.next(rates.size)])
+}
+
+fun randomLines(var r: Random, debit: bool, movement: bool = false): array<SaftLine> {
+    val out: array<SaftLine> = []
+    for (i in 0 until 1 + r.next(6)) {
+        val quantity = dec(amountText(r, 50, r.next(4)))
+        val price = dec(amountText(r, 2000, r.next(5)))
+        val amount = quantity.times(price)
+        val exempt = r.next(5) == 0
+        val tax = if (exempt) vat("PT", "ISE", "0") else randomTax(r)
+        out.append(SaftLine(i + 1, "P1", "Pão de ló " + randomText(r), quantity, "UN", price, randomText(r),
+            debitAmount = if (debit) amount else null, creditAmount = if (debit) null else amount, tax = tax, taxPointDate = if (movement) "" else "2026-03-14",
+            taxExemptionReason = if (exempt) "Artigo 9.º do CIVA" else "", taxExemptionCode = if (exempt) "M07" else ""))
+    }
+    out
+}
+
+// A file of random documents, chained with `signer`.
+fun generatedFile(seed: int, signer: SaftSigner): SaftFile {
+    val r = Random(seed * 7919 + 13)
+    val sales: array<SaftInvoice> = []
+    val types = ["FT", "FS", "FR", "NC", "ND"]
+    for (type in types) {
+        var previous = ""
+        for (n in 1 until 2 + r.next(5)) {
+            val status = if (r.next(7) == 0) normalStatus("A", "Anulado") else normalStatus()
+            val d = invoiceOf(type, "G$seed", n, "C1", randomLines(r, type == "NC"), status)
+            previous = saftSignInvoice(d, signer, previous).hash
+            sales.append(d)
+        }
+    }
+    val goods: array<SaftStockMovement> = []
+    var previous = ""
+    for (n in 1 until 1 + r.next(4)) {
+        val d = movementOf("GT", n, randomLines(r, false, true), if (r.next(5) == 0) normalStatus("A", "Anulada") else normalStatus())
+        previous = saftSignMovement(d, signer, previous).hash
+        goods.append(d)
+    }
+    val work: array<SaftWorkDocument> = []
+    previous = ""
+    for (n in 1 until 1 + r.next(4)) {
+        val d = workOf("PF", n, randomLines(r, false), if (r.next(5) == 0) normalStatus("A", "Anulado") else normalStatus())
+        previous = saftSignWorkDocument(d, signer, previous).hash
+        work.append(d)
+    }
+    val receipts: array<SaftPayment> = []
+    for (n in 1 until 1 + r.next(4)) receipts.append(paymentOf(if (r.next(2) == 0) "RC" else "RG", n, amountText(r, 900, 2)))
+    SaftFile(sampleHeader(), sampleMaster(), saftSalesInvoices(sales), saftMovementOfGoods(goods), saftWorkingDocuments(work), saftPayments(receipts))
+}

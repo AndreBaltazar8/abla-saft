@@ -1,0 +1,131 @@
+// The seven examples of AT's specification, section 5, rebuilt field by field, with the
+// character counts and QR versions its figures give.
+import "../src/saft.ab"
+import "support/samples.ab"
+import github("AndreBaltazar8/abla-qr")
+import "abla/test"
+import "abla/text"
+
+fun check(label: string, data: SaftQrData, expected: string, characters: int, version: int): void {
+    val r = saftQrMessage(data)
+    expect(r.ok, "$label builds: ${r.error}")
+    expectEqual(r.message, expected, label)
+    expectEqual(r.message.size, characters, label + " character count in the figure")
+    val image = saftQrImage(r.message)
+    expect(image.ok, label + " has an image")
+    expectEqual(image.version, version, label + " version in the figure")
+    val read = qrReadPng(image.png)
+    val decoded = read.decoded
+    if (expect(decoded != null, label + " reads back from its PNG: " + read.error) && decoded != null) expectEqual(decoded.data, r.message, label + " reads the same")
+    return
+}
+
+fun main: int {
+    check("Example 1", SaftQrData("123456789", "999999990", "PT", "FT", "N", "2019-12-31", "FT AB2019/0035", "CSDF7T5H-0035", dec("64000.02"), dec("513600.58"), "kLp0", 9999,
+        [SaftQrRegion("PT", dec("12000.00"), dec("15000.00"), dec("900.00"), dec("50000.00"), dec("6500.00"), dec("80000.00"), dec("18400.00")),
+         SaftQrRegion("PT-AC", dec("10000.00"), dec("25000.56"), dec("1000.02"), dec("75000.00"), dec("6750.00"), dec("100000.00"), dec("18000.00")),
+         SaftQrRegion("PT-MA", dec("5000.00"), dec("12500.00"), dec("625.00"), dec("25000.00"), dec("3000.00"), dec("40000.00"), dec("8800.00"))],
+        dec("100.00"), dec("25.00"), dec("100.00"), "TB;PT00000000000000000000000;513500.58"),
+        "A:123456789*B:999999990*C:PT*D:FT*E:N*F:20191231*G:FT AB2019/0035*H:CSDF7T5H-0035*I1:PT*I2:12000.00*I3:15000.00*I4:900.00*I5:50000.00*I6:6500.00*I7:80000.00*I8:18400.00*J1:PT-AC*J2:10000.00*J3:25000.56*J4:1000.02*J5:75000.00*J6:6750.00*J7:100000.00*J8:18000.00*K1:PT-MA*K2:5000.00*K3:12500.00*K4:625.00*K5:25000.00*K6:3000.00*K7:40000.00*K8:8800.00*L:100.00*M:25.00*N:64000.02*O:513600.58*P:100.00*Q:kLp0*R:9999*S:TB;PT00000000000000000000000;513500.58",
+        452, 17)
+    check("Example 2", SaftQrData("123456789", "999999990", "PT", "FS", "N", "2019-08-12", "FS CDVF/12345", "CDF7T5HD-12345", dec("0.15"), dec("0.80"), "YhGV", 9999,
+        [SaftQrRegion("PT", standardBase = dec("0.65"), standardVat = dec("0.15"))], otherInformation = "NU;0.80"),
+        "A:123456789*B:999999990*C:PT*D:FS*E:N*F:20190812*G:FS CDVF/12345*H:CDF7T5HD-12345*I1:PT*I7:0.65*I8:0.15*N:0.15*O:0.80*Q:YhGV*R:9999*S:NU;0.80",
+        141, 9)
+    check("Example 3", SaftQrData("500000000", "123456789", "PT", "PF", "N", "2019-01-23", "PF G2019CB/145789", "HB6FT7RV-145789", dec("15072.44"), dec("125165.12"), "r/fY", 9999,
+        [SaftQrRegion("PT", dec("12345.34"), dec("12532.65"), dec("751.96"), dec("52789.00"), dec("6862.57"), dec("32425.69"), dec("7457.91"))]),
+        "A:500000000*B:123456789*C:PT*D:PF*E:N*F:20190123*G:PF G2019CB/145789*H:HB6FT7RV-145789*I1:PT*I2:12345.34*I3:12532.65*I4:751.96*I5:52789.00*I6:6862.57*I7:32425.69*I8:7457.91*N:15072.44*O:125165.12*Q:r/fY*R:9999",
+        209, 10)
+    check("Example 4", SaftQrData("500000000", "123456789", "PT", "GT", "N", "2019-07-20", "GT G234CB/50987", "GTVX4Y8B-50987", dec("0"), dec("0"), "5uIg", 9999),
+        "A:500000000*B:123456789*C:PT*D:GT*E:N*F:20190720*G:GT G234CB/50987*H:GTVX4Y8B-50987*I1:0*N:0.00*O:0.00*Q:5uIg*R:9999",
+        116, 9)
+    check("Example 5", SaftQrData("123456789", "4443332215", "FR", "FT", "N", "2019-05-26", "ABC BNH/4561", "DK5ZJ2HN-4561", dec("20.00"), dec("120.00"), "YJRE", 9999,
+        [SaftQrRegion("FR", standardBase = dec("100.00"), standardVat = dec("20.00"))]),
+        "A:123456789*B:4443332215*C:FR*D:FT*E:N*F:20190526*G:ABC BNH/4561*H:DK5ZJ2HN-4561*I1:FR*I7:100.00*I8:20.00*N:20.00*O:120.00*Q:YJRE*R:9999",
+        136, 9)
+    // AT prints 129 and 150 for the next two: its printed messages carry stray spaces
+    // after "G:" and "H:", against its own rule 3 a). Without them, these counts.
+    check("Example 6", SaftQrData("123456789", "500000000", "PT", "ND", "N", "2019-02-16", "M1F KLG/6145", "RQD8L6DG-6145", dec("26.50"), dec("26.50"), "h1rB", 9999,
+        [SaftQrRegion("PT-MA", intermediateVat = dec("26.50"))]),
+        "A:123456789*B:500000000*C:PT*D:ND*E:N*F:20190216*G:M1F KLG/6145*H:RQD8L6DG-6145*I1:PT-MA*I6:26.50*N:26.50*O:26.50*Q:h1rB*R:9999",
+        127, 9)
+    check("Example 7", SaftQrData("500000000", "123456789", "PT", "FT", "N", "2019-11-24", "NF 19A/789145", "JL9DS4TT-789145", dec("9.00"), dec("1059.00"), "d8/K", 9999,
+        [SaftQrRegion("PT-AC", standardBase = dec("50.00"), standardVat = dec("9.00"))], dec("1000.00")),
+        "A:500000000*B:123456789*C:PT*D:FT*E:N*F:20191124*G:NF 19A/789145*H:JL9DS4TT-789145*I1:PT-AC*I7:50.00*I8:9.00*L:1000.00*N:9.00*O:1059.00*Q:d8/K*R:9999",
+        149, 9)
+
+    // Rules of section 3.
+    expect(saftQrMessage(SaftQrData("1234567890", "999999990", "PT", "FT", "N", "2019-12-31", "FT A/1", "0", dec("0"), dec("0"), "abcd", 1)).error.contains("A has"), "field limits apply")
+    expect(saftQrMessage(SaftQrData("123456789", "999999990", "PT", "FT", "N", "2019-12-31", "FT A/1", "0", dec("0"), dec("0"), "abcde", 1)).error.contains("Q has"), "Q is four")
+    expect(!saftQrMessage(SaftQrData("123456789", "999999990", "PT", "FT", "N", "2019-12-31", "FT A/1", "0", dec("0"), dec("0"), "abcd", 12345)).ok, "R is four")
+    expect(saftQrMessage(SaftQrData("123456789", "999999990", "PT", "FT", "N", "2019-12-31", "FT A/1", "0", dec("0"), dec("0"), "abcd", 1, otherInformation = "a*b")).error.contains("asterisk"), "no asterisk in S")
+    expect(!saftQrMessage(SaftQrData("123456789", "999999990", "PT", "FT", "N", "2019-12-31", "FT A/1", "0", dec("0"), dec("0"), "abcd", 1, otherInformation = "x".repeat(66))).ok, "S is 65")
+    val four = [SaftQrRegion("PT"), SaftQrRegion("PT-AC"), SaftQrRegion("PT-MA"), SaftQrRegion("FR")]
+    expect(saftQrMessage(SaftQrData("123456789", "999999990", "PT", "FT", "N", "2019-12-31", "FT A/1", "0", dec("0"), dec("0"), "abcd", 1, four)).error.contains("three"), "three regions")
+    val rounding = saftQrMessage(SaftQrData("123456789", "999999990", "PT", "FT", "N", "2019-12-31", "FT A/1", "0", dec("1.005"), dec("7.1"), "abcd", 1))
+    expect(rounding.message.contains("*N:1.01*O:7.10*"), "two decimals, whatever the database holds")
+
+    // ATCUD, Portaria 195/2020 and the specification's examples.
+    expectEqual(saftAtcud("CSDF7T5H", "FT AB2019/0035"), "CSDF7T5H-0035", "keeps leading zeros")
+    expectEqual(saftAtcud("CDF7T5HD", "FS CDVF/12345"), "CDF7T5HD-12345", "the second example")
+    expectEqual(saftAtcud("ABCDEFG", "FT A/1"), "", "under 8 characters")
+    expectEqual(saftAtcud("ABCDEFGH", "FT A"), "", "no sequence")
+    expectEqual(saftAtcud("ABCD EFGH", "FT A/1"), "", "no spaces")
+    expectEqual(saftAtcud("ABCD-EFGH", "FT A/1"), "", "the code can't hold the separator")
+    expectEqual(saftAtcud("X".repeat(70), "FT A/1"), "", "the QR field holds 70")
+    expectEqual(saftAtcudPrinted("CSDF7T5H-0035"), "ATCUD:CSDF7T5H-0035", "printed form of article 4")
+    expectEqual(saftSequenceNumber("FT A/B/0035"), "0035", "after the last slash")
+
+    // From documents.
+    val regions = regionsFile()
+    val sales = regions.salesInvoices
+    if (sales != null) {
+        val d = sales.invoices[0]
+        val r = saftQrForInvoice(regions, d)
+        expect(r.ok, "from a document: ${r.error}")
+        val hash = saftPrintedCharacters(d.hash)
+        expectEqual(r.message, "A:599999993*B:500000000*C:PT*D:FT*E:N*F:20260314*G:FT R/1*H:ABCD1234-1*I1:PT*I7:100.00*I8:23.00*J1:PT-AC*J7:100.00*J8:16.00*K1:PT-MA*K5:0.06*K6:0.01*K7:100.00*K8:22.00*N:61.01*O:361.07*Q:$hash*R:0", "regions in the table's order, summed at each rate")
+    }
+    val exemptions = exemptionFile()
+    val other = exemptions.salesInvoices
+    if (other != null) {
+        val d = other.invoices[0]
+        val r = saftQrForInvoice(exemptions, d, "NU;1.00")
+        expect(r.message.contains("*C:FR*"), "the customer's country: ${r.message}")
+        expect(r.message.contains("*I1:PT*I2:80.00*J1:FR*J7:40.00*J8:8.00*L:50.00*M:15.00*N:23.00*"), "exempt with stamp duty, foreign VAT, not subject: ${r.message}")
+        expect(r.message.endsWith("*S:NU;1.00"), "other information goes last")
+    }
+    val cancelled = cancelledFile()
+    val c = cancelled.salesInvoices
+    if (c != null) expect(saftQrForInvoice(cancelled, c.invoices[1]).message.contains("*E:A*"), "status of a cancelled document")
+    val foreign = foreignCurrencyFile()
+    val fs = foreign.salesInvoices
+    if (fs != null) {
+        val r = saftQrForInvoice(foreign, fs.invoices[0])
+        expect(r.message.contains("*O:" + fs.invoices[0].totals.grossTotal.money() + "*"), "foreign documents show euros")
+        expect(r.message.contains("*P:1.25*"), "withholding")
+    }
+    val moved = oneMovement("GT")
+    val mv = moved.movementOfGoods
+    if (mv != null) {
+        val r = saftQrForMovement(moved, mv.movements[0])
+        expect(r.message.contains("*I1:0*N:0.00*O:0.00*"), "a transport document that shows no values: ${r.message}")
+        expect(saftQrForMovement(moved, mv.movements[0], true).message.contains("*I1:PT*"), "or that does")
+    }
+    val toSupplier = oneMovement("GD")
+    val gd = toSupplier.movementOfGoods
+    if (gd != null) expect(saftQrForMovement(toSupplier, gd.movements[0]).ok, "a return to a supplier")
+    val worked = oneWork("PF")
+    val wk = worked.workingDocuments
+    if (wk != null) expect(saftQrForWorkDocument(worked, wk.documents[0]).message.contains("*D:PF*"), "a working document")
+    val paid = onePayment("RG")
+    val pay = paid.payments
+    if (pay != null) {
+        val r = saftQrForPayment(paid, pay.payments[0])
+        expect(r.message.contains("*D:RG*E:N*F:20260315*G:RG A/1*"), "a receipt: ${r.message}")
+        expect(r.message.contains("*Q:0*R:0"), "a receipt has no signature to quote")
+    }
+    val noCustomer = invoiceOf("FT", "A", 1, "NOPE", stdLines())
+    expect(!saftQrForInvoice(regions, noCustomer).ok, "an unknown customer")
+    testsPassed()
+}

@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="Windows-1252"?>
+<AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:PT_1.04_01">
+  <Header>
+    <AuditFileVersion>1.04_01</AuditFileVersion>
+    <CompanyID>Conservatória de Coimbra 1234/56</CompanyID>
+    <TaxRegistrationNumber>599999993</TaxRegistrationNumber>
+    <TaxAccountingBasis>F</TaxAccountingBasis>
+    <CompanyName>Exemplo &amp; Companhia, Lda.</CompanyName>
+    <BusinessName>Açúcar é Bom</BusinessName>
+    <CompanyAddress>
+      <BuildingNumber>12</BuildingNumber>
+      <StreetName>Rua das Flores</StreetName>
+      <AddressDetail>Rua das Flores, 12 - 1.º</AddressDetail>
+      <City>Coimbra</City>
+      <PostalCode>3000-123</PostalCode>
+      <Region>Coimbra</Region>
+      <Country>PT</Country>
+    </CompanyAddress>
+    <FiscalYear>2026</FiscalYear>
+    <StartDate>2026-01-01</StartDate>
+    <EndDate>2026-12-31</EndDate>
+    <CurrencyCode>EUR</CurrencyCode>
+    <DateCreated>2026-12-31</DateCreated>
+    <TaxEntity>Global</TaxEntity>
+    <ProductCompanyTaxID>599999993</ProductCompanyTaxID>
+    <SoftwareCertificateNumber>0</SoftwareCertificateNumber>
+    <ProductID>abla-saft tests/Exemplo</ProductID>
+    <ProductVersion>0.1.0</ProductVersion>
+    <Email>geral@example.pt</Email>
+  </Header>
+  <MasterFiles>
+    <Customer>
+      <CustomerID>CF</CustomerID>
+      <AccountID>Desconhecido</AccountID>
+      <CustomerTaxID>999999990</CustomerTaxID>
+      <CompanyName>Consumidor final</CompanyName>
+      <BillingAddress>
+        <AddressDetail>Desconhecido</AddressDetail>
+        <City>Desconhecido</City>
+        <PostalCode>Desconhecido</PostalCode>
+        <Country>Desconhecido</Country>
+      </BillingAddress>
+      <SelfBillingIndicator>0</SelfBillingIndicator>
+    </Customer>
+    <Customer>
+      <CustomerID>C1</CustomerID>
+      <AccountID>Desconhecido</AccountID>
+      <CustomerTaxID>500000000</CustomerTaxID>
+      <CompanyName>Cliente Português, S.A.</CompanyName>
+      <BillingAddress>
+        <BuildingNumber>12</BuildingNumber>
+        <StreetName>Rua das Flores</StreetName>
+        <AddressDetail>Rua das Flores, 12 - 1.º</AddressDetail>
+        <City>Coimbra</City>
+        <PostalCode>3000-123</PostalCode>
+        <Region>Coimbra</Region>
+        <Country>PT</Country>
+      </BillingAddress>
+      <Telephone>+351 239 000 000</Telephone>
+      <SelfBillingIndicator>0</SelfBillingIndicator>
+    </Customer>
+    <Customer>
+      <CustomerID>C2</CustomerID>
+      <AccountID>2111</AccountID>
+      <CustomerTaxID>4443332215</CustomerTaxID>
+      <CompanyName>Client Français SARL</CompanyName>
+      <BillingAddress>
+        <AddressDetail>1 Rue de la Paix</AddressDetail>
+        <City>Paris</City>
+        <PostalCode>75002</PostalCode>
+        <Country>FR</Country>
+      </BillingAddress>
+      <SelfBillingIndicator>0</SelfBillingIndicator>
+    </Customer>
+    <Supplier>
+      <SupplierID>S1</SupplierID>
+      <AccountID>Desconhecido</AccountID>
+      <SupplierTaxID>500000000</SupplierTaxID>
+      <CompanyName>Fornecedor, Lda.</CompanyName>
+      <BillingAddress>
+        <BuildingNumber>12</BuildingNumber>
+        <StreetName>Rua das Flores</StreetName>
+        <AddressDetail>Rua das Flores, 12 - 1.º</AddressDetail>
+        <City>Coimbra</City>
+        <PostalCode>3000-123</PostalCode>
+        <Region>Coimbra</Region>
+        <Country>PT</Country>
+      </BillingAddress>
+      <SelfBillingIndicator>0</SelfBillingIndicator>
+    </Supplier>
+    <Product>
+      <ProductType>P</ProductType>
+      <ProductCode>P1</ProductCode>
+      <ProductDescription>Pão de ló</ProductDescription>
+      <ProductNumberCode>5601234567890</ProductNumberCode>
+      <CustomsDetails>
+        <CNCode>19059090</CNCode>
+      </CustomsDetails>
+    </Product>
+    <Product>
+      <ProductType>S</ProductType>
+      <ProductCode>S1</ProductCode>
+      <ProductGroup>Serviços</ProductGroup>
+      <ProductDescription>Serviço de consultoria</ProductDescription>
+      <ProductNumberCode>S1</ProductNumberCode>
+    </Product>
+    <TaxTable>
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>PT</TaxCountryRegion>
+        <TaxCode>NOR</TaxCode>
+        <Description>Taxa normal</Description>
+        <TaxPercentage>23</TaxPercentage>
+      </TaxTableEntry>
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>PT</TaxCountryRegion>
+        <TaxCode>INT</TaxCode>
+        <Description>Taxa intermédia</Description>
+        <TaxPercentage>13</TaxPercentage>
+      </TaxTableEntry>
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>PT</TaxCountryRegion>
+        <TaxCode>RED</TaxCode>
+        <Description>Taxa reduzida</Description>
+        <TaxPercentage>6</TaxPercentage>
+      </TaxTableEntry>
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>PT</TaxCountryRegion>
+        <TaxCode>ISE</TaxCode>
+        <Description>Isenta</Description>
+        <TaxPercentage>0</TaxPercentage>
+      </TaxTableEntry>
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>PT-AC</TaxCountryRegion>
+        <TaxCode>NOR</TaxCode>
+        <Description>Taxa normal Açores</Description>
+        <TaxPercentage>16</TaxPercentage>
+      </TaxTableEntry>
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>PT-MA</TaxCountryRegion>
+        <TaxCode>NOR</TaxCode>
+        <Description>Taxa normal Madeira</Description>
+        <TaxPercentage>22</TaxPercentage>
+      </TaxTableEntry>
+      <TaxTableEntry>
+        <TaxType>IS</TaxType>
+        <TaxCountryRegion>PT</TaxCountryRegion>
+        <TaxCode>1.1</TaxCode>
+        <Description>Verba 1.1</Description>
+        <TaxAmount>5.00</TaxAmount>
+      </TaxTableEntry>
+      <TaxTableEntry>
+        <TaxType>NS</TaxType>
+        <TaxCountryRegion>PT</TaxCountryRegion>
+        <TaxCode>NS</TaxCode>
+        <Description>Não sujeito</Description>
+        <TaxPercentage>0</TaxPercentage>
+      </TaxTableEntry>
+    </TaxTable>
+  </MasterFiles>
+  <SourceDocuments>
+    <Payments>
+      <NumberOfEntries>1</NumberOfEntries>
+      <TotalDebit>0.00</TotalDebit>
+      <TotalCredit>100.00</TotalCredit>
+      <Payment>
+        <PaymentRefNo>RG A/1</PaymentRefNo>
+        <ATCUD>RECB1234-1</ATCUD>
+        <TransactionDate>2026-03-15</TransactionDate>
+        <PaymentType>RG</PaymentType>
+        <DocumentStatus>
+          <PaymentStatus>N</PaymentStatus>
+          <PaymentStatusDate>2026-03-14T10:20:30</PaymentStatusDate>
+          <SourceID>ana</SourceID>
+          <SourcePayment>P</SourcePayment>
+        </DocumentStatus>
+        <PaymentMethod>
+          <PaymentMechanism>TB</PaymentMechanism>
+          <PaymentAmount>123.00</PaymentAmount>
+          <PaymentDate>2026-03-15</PaymentDate>
+        </PaymentMethod>
+        <SourceID>ana</SourceID>
+        <SystemEntryDate>2026-03-15T09:00:00</SystemEntryDate>
+        <CustomerID>C1</CustomerID>
+        <Line>
+          <LineNumber>1</LineNumber>
+          <SourceDocumentID>
+            <OriginatingON>FT A/1</OriginatingON>
+            <InvoiceDate>2026-03-14</InvoiceDate>
+          </SourceDocumentID>
+          <CreditAmount>100.00</CreditAmount>
+          <Tax>
+            <TaxType>IVA</TaxType>
+            <TaxCountryRegion>PT</TaxCountryRegion>
+            <TaxCode>NOR</TaxCode>
+            <TaxPercentage>23</TaxPercentage>
+          </Tax>
+        </Line>
+        <DocumentTotals>
+          <TaxPayable>23.00</TaxPayable>
+          <NetTotal>100.00</NetTotal>
+          <GrossTotal>123.00</GrossTotal>
+        </DocumentTotals>
+      </Payment>
+    </Payments>
+  </SourceDocuments>
+</AuditFile>

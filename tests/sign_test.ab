@@ -1,0 +1,264 @@
+// The key here is made by openssl when the test runs, in build/, and removed at the end.
+// tools/check-signatures.sh has openssl verify this library's signatures; here is the
+// other direction, and chain breaks. FakeSigner stands in where no RSA is at stake.
+import "../src/saft.ab"
+import "support/samples.ab"
+import "abla/crypto"
+import "abla/fs"
+import "abla/process"
+import "abla/test"
+import "abla/text"
+
+val despachoFirst = "oso2FoOw4V941CwKTrv6xwzUrOtxBWCwU0yLVAqKwf0CNKZHMETG1XZZC4spRSyby1uDXBggpIogrl8gHnvevA00UEoAvGJo9Fa3DOA0MhZNDa9/rNvu71pp+0zHmN2ra5lWpiHcgmUYxm5qamLBk49rkgvI7h1myKCYBKqgu60="
+
+class ShortSigner : SaftSigner {
+    fun keyVersion(): int = 1
+    fun sign(message: string): string = "short"
+}
+
+class NoVersionSigner : SaftSigner {
+    fun keyVersion(): int = 0
+    fun sign(message: string): string = "x".repeat(128)
+}
+
+fun invoice(sequence: int, gross: string, date: string = "2026-03-14", number: string = ""): SaftInvoice {
+    val lines = [saleLine(1, "1", gross, vat("PT", "ISE", "0"), "Artigo 9.º do CIVA", "M07")]
+    val name = if (number == "") "FT A/$sequence" else number
+    SaftInvoice(name, saftAtcud("ABCD1234", name), normalStatus(), date, "FT", "ana", date + "T10:20:30", "C1", lines, saftComputeTotals(lines))
+}
+
+// A series of `count`, each document signed on the previous one's Hash.
+fun series(signer: SaftSigner, count: int): array<SaftInvoice> {
+    val out: array<SaftInvoice> = []
+    var previous = ""
+    for (n in 1 until count + 1) {
+        val d = invoice(n, "${n}0.00")
+        previous = saftSignInvoice(d, signer, previous).hash
+        out.append(d)
+    }
+    out
+}
+
+fun chainFile(items: array<SaftInvoice>): SaftFile = fileWith(sales = saftSalesInvoices(items))
+
+fun hasProblem(report: SaftChainReport, code: string, document: string): bool {
+    for (p in report.problems) if (p.code == code && p.document == document) return true
+    false
+}
+
+fun copyWith(d: SaftInvoice, gross: string): SaftInvoice {
+    val lines = [saleLine(1, "1", gross, vat("PT", "ISE", "0"), "Artigo 9.º do CIVA", "M07")]
+    val out = SaftInvoice(d.invoiceNo, d.atcud, d.status, d.invoiceDate, d.invoiceType, d.sourceId, d.systemEntryDate, d.customerId, lines, saftComputeTotals(lines))
+    out.hash = d.hash
+    out.hashControl = d.hashControl
+    out
+}
+
+fun main: int {
+    // The Despacho's worked example, 7.1: exact messages.
+    expectEqual(saftSignatureMessage("2010-05-18", "2010-05-18T11:22:19", "FAC 001/14", dec("3.12"), ""),
+        "2010-05-18;2010-05-18T11:22:19;FAC 001/14;3.12;", "first record ends in a semicolon, with no line ending")
+    expectEqual(saftSignatureMessage("2010-05-18", "2010-05-18T15:43:25", "FAC 001/15", dec("25.62"), despachoFirst),
+        "2010-05-18;2010-05-18T15:43:25;FAC 001/15;25.62;" + despachoFirst, "second record carries the first's Hash")
+    expectEqual(despachoFirst.size, saftHashCharacters, "the Despacho's signature has the 172 characters it requires")
+    // Its other examples: no value is 0.00, and amounts always have two decimals.
+    expectEqual(saftSignatureMessage("2013-07-02", "2013-07-02T09:37:25", "GR ABC/00021", dec("0"), ""),
+        "2013-07-02;2013-07-02T09:37:25;GR ABC/00021;0.00;", "a transport document with no value")
+    expectEqual(saftSignatureMessage("2013-07-01", "2013-07-01T11:27:08", "FS 001/0009", dec("200"), ""),
+        "2013-07-01;2013-07-01T11:27:08;FS 001/0009;200.00;", "two decimals")
+    expectEqual(saftSignatureMessage("2013-07-01", "2013-07-01T11:27:08", "FS 001/0009", dec("1234.565"), ""),
+        "2013-07-01;2013-07-01T11:27:08;FS 001/0009;1234.57;", "no thousands separator, rounded")
+
+    // Printed characters: positions 1, 11, 21, 31, counted by hand on the Despacho's signature.
+    expectEqual(saftPrintedCharacters(despachoFirst), "o9xC", "positions 1, 11, 21 and 31")
+    expectEqual(saftPrintedCharacters("0"), "", "an unsigned document has none")
+    expectEqual(saftPrintedCharacters("x".repeat(30)), "", "30 characters aren't enough")
+    expectEqual(saftPrintedCharacters("a".repeat(30) + "b"), "aaab", "31 are")
+    expectEqual(saftProcessedByText(despachoFirst, 1234), "o9xC-Processado por programa certificado n.º 1234/AT", "the printed expression")
+    expectEqual(saftProcessedByText("0", 1234), "", "no expression without a signature")
+    expectEqual(saftIssuedByText(1234), "Emitido por programa certificado n.º 1234/AT", "receipts")
+
+    // HashControl forms, in the Despacho's own examples, and the XSD's pattern takes them.
+    expectEqual(saftManualHashControl(1, "FT", "abc/00001"), "1-FTM abc/00001", "manual recovery")
+    expectEqual(saftDuplicateHashControl(1, "FT", "XY 2013A/00099"), "1-FTD XY 2013A/00099", "duplicate recovery")
+    expectEqual(saftIntegratedHashControl(9999, 1), "9999.1", "integrated")
+    for (control in ["1", "0", "9999.1", "1-FTM abc/00001", "1-FTD XY 2013A/00099"]) {
+        val d = invoice(1, "10.00")
+        d.hashControl = control
+        expect(!saftHasErrors(saftCheck(chainFile([d]))), "HashControl $control passes")
+    }
+    // The Despacho's 2.3.4 f) also gives "Não certificado", which the XSD's pattern rejects.
+    val notCertified = invoice(1, "10.00")
+    notCertified.hashControl = "Não certificado"
+    expect(saftHasErrors(saftCheck(chainFile([notCertified]))), "\"Não certificado\" follows the XSD and fails")
+
+    // What can't be signed.
+    val fake = FakeSigner()
+    expect(!saftSign(fake, "14-03-2026", "2026-03-14T10:20:30", "FT A/1", dec("1"), "").ok, "a bad date")
+    expect(!saftSign(fake, "2026-03-14", "2026-03-14 10:20:30", "FT A/1", dec("1"), "").ok, "a bad timestamp")
+    expect(!saftSign(fake, "2026-03-14", "2026-03-14T10:20:30+01:00", "FT A/1", dec("1"), "").ok, "a time zone")
+    expect(!saftSign(fake, "2026-03-14", "2026-03-14T10:20:30", "FT1", dec("1"), "").ok, "a bad number")
+    expect(!saftSign(fake, "2026-03-14", "2026-03-14T10:20:30", "FTÇ A/1", dec("1"), "").ok, "a number that isn't ASCII")
+    expect(!saftSign(fake, "2026-03-14", "2026-03-14T10:20:30", "FT A/1", dec("-1"), "").ok, "a negative total")
+    expect(!saftSign(fake, "2026-03-14", "2026-03-14T10:20:30", "FT A/1", dec("1"), "short").ok, "a malformed previous Hash")
+    expect(!saftSign(ShortSigner(), "2026-03-14", "2026-03-14T10:20:30", "FT A/1", dec("1"), "").ok, "a signer returning the wrong size")
+    expect(!saftSign(NoVersionSigner(), "2026-03-14", "2026-03-14T10:20:30", "FT A/1", dec("1"), "").ok, "key version 0")
+    val refused = invoice(1, "10.00")
+    saftSignInvoice(refused, ShortSigner(), "")
+    expectEqual(refused.hash, "0", "a failed signature leaves the document alone")
+    expectEqual(saftRsaSignerFromPem("nothing").error, "not an unencrypted RSA private key in PEM", "not a key")
+    expect(!saftRsaPublicKeyFromPem("nothing").ok(), "not a public key")
+
+    // A real key, now.
+    val dir = "build/sign-test"
+    path(dir).removeTree()
+    path(dir).createDirectories()
+    val made = command("openssl").argument("genrsa").argument("-out").argument(dir + "/key.pem").argument("1024").run()
+    if (!expect(made == 0, "openssl made a key")) return testsPassed()
+    val made2 = command("openssl").argument("rsa").argument("-in").argument(dir + "/key.pem").argument("-pubout").argument("-out").argument(dir + "/pub.pem").run()
+    command("openssl").argument("genrsa").argument("-out").argument(dir + "/other.pem").argument("1024").run()
+    command("openssl").argument("rsa").argument("-in").argument(dir + "/other.pem").argument("-pubout").argument("-out").argument(dir + "/otherpub.pem").run()
+    expect(made2 == 0, "openssl wrote the public key")
+    val signerResult = saftRsaSignerFromPem(path(dir + "/key.pem").readText(), 3)
+    val signer = signerResult.signer
+    val key = saftRsaPublicKeyFromPem(path(dir + "/pub.pem").readText())
+    val otherKey = saftRsaPublicKeyFromPem(path(dir + "/otherpub.pem").readText())
+    path(dir).removeTree()
+    expect(key.ok(), "public key reads")
+    if (!expect(signer != null, "private key reads: " + signerResult.error) || signer == null) return testsPassed()
+
+    val one = saftSign(signer, "2026-03-14", "2026-03-14T10:20:30", "FT A/1", dec("10"), "")
+    expect(one.ok, "signs")
+    expectEqual(one.hash.size, saftHashCharacters, "172 characters")
+    expect(!one.hash.contains("\n"), "on one line")
+    expectEqual(one.hashControl, "3", "HashControl is the key version")
+    expectEqual(one.message, "2026-03-14;2026-03-14T10:20:30;FT A/1;10.00;", "the message it signed")
+    expect(saftVerifySignature(key, one.message, one.hash), "its signature verifies")
+    expect(!saftVerifySignature(key, one.message + "x", one.hash), "not on another message")
+    expect(!saftVerifySignature(otherKey, one.message, one.hash), "not under another key")
+    expect(!saftVerifySignature(key, one.message, "A" + one.hash.slice(1, one.hash.size)), "not when changed")
+
+    // A whole series, then broken in each way.
+    val good = series(signer, 6)
+    val fine = saftVerifyChains(chainFile(good), key)
+    expect(fine.ok(), "an intact chain verifies")
+    expectEqual(fine.verified, 6, "all six")
+    expectEqual(saftVerifyChains(chainFile(good)).problems.size, 0, "no key: the form is fine")
+    expectEqual(saftVerifyChains(chainFile(good)).verified, 0, "no key: nothing is claimed as verified")
+
+    // Changed amount: that document alone, since the next signed the unchanged Hash.
+    val amount: array<SaftInvoice> = []
+    for (i in 0 until good.size) amount.append(if (i == 2) copyWith(good[i], "999.99") else good[i])
+    val amountReport = saftVerifyChains(chainFile(amount), key)
+    expect(hasProblem(amountReport, "bad_signature", "FT A/3"), "a changed GrossTotal breaks its document")
+    expectEqual(amountReport.problems.size, 1, "and only it")
+
+    // Changed Hash: it and the one after, which signed the original.
+    val changed: array<SaftInvoice> = []
+    for (i in 0 until good.size) {
+        val d = copyWith(good[i], "${i + 1}0.00")
+        if (i == 2) d.hash = series(FakeSigner(), 1)[0].hash
+        changed.append(d)
+    }
+    val changedReport = saftVerifyChains(chainFile(changed), key)
+    expect(hasProblem(changedReport, "bad_signature", "FT A/3"), "a replaced Hash fails on itself")
+    expect(hasProblem(changedReport, "bad_signature", "FT A/4"), "and on the next document")
+
+    // Removed: a gap, and the next no longer verifies.
+    val removed: array<SaftInvoice> = []
+    for (i in 0 until good.size) if (i != 3) removed.append(good[i])
+    val removedReport = saftVerifyChains(chainFile(removed), key)
+    expect(hasProblem(removedReport, "sequence_gap", "FT A/5"), "a removed document is a gap")
+    expect(hasProblem(removedReport, "bad_signature", "FT A/5"), "and its successor fails")
+
+    // Reordered in the file: sequence order is what counts, so it still verifies.
+    val reordered: array<SaftInvoice> = []
+    reordered.append(good[1])
+    reordered.append(good[0])
+    for (i in 2 until good.size) reordered.append(good[i])
+    expect(saftVerifyChains(chainFile(reordered), key).ok(), "file order doesn't matter")
+
+    // Two series and two types chain apart.
+    val a1 = invoice(1, "10.00")
+    val b1 = invoice(1, "10.00", number = "FT B/1")
+    val a2 = invoice(2, "10.00")
+    val h1 = saftSignInvoice(a1, signer, "").hash
+    saftSignInvoice(b1, signer, "")
+    saftSignInvoice(a2, signer, h1)
+    expectEqual(saftVerifyChains(chainFile([a1, b1, a2]), key).verified, 3, "series chain separately")
+
+    // A wrong previous document, from the other series.
+    val wrong = invoice(2, "10.00", number = "FT B/2")
+    saftSignInvoice(wrong, signer, h1)
+    expect(hasProblem(saftVerifyChains(chainFile([a1, b1, a2, wrong]), key), "bad_signature", "FT B/2"), "signed on another series' Hash")
+
+    // Multiannual: Despacho 2.1.5 lets the first of a year sign either way.
+    val y1 = invoice(1, "10.00", "2025-12-31")
+    val y2 = invoice(2, "10.00", "2026-01-01")
+    val y3 = invoice(3, "10.00", "2026-01-02")
+    val h2 = saftSignInvoice(y1, signer, "").hash
+    val h3 = saftSignInvoice(y2, signer, "").hash
+    saftSignInvoice(y3, signer, h3)
+    expect(saftVerifyChains(chainFile([y1, y2, y3]), key).ok(), "a new year may restart the chain")
+    val z2 = invoice(2, "10.00", "2026-01-01")
+    saftSignInvoice(z2, signer, h2)
+    expect(saftVerifyChains(chainFile([y1, z2]), key).ok(), "or carry it on")
+    val same = invoice(2, "10.00", "2025-12-31")
+    saftSignInvoice(same, signer, "")
+    expect(hasProblem(saftVerifyChains(chainFile([y1, same]), key), "bad_signature", "FT A/2"), "within a year it can't restart")
+
+    // A file starting mid-series: what it can't check, it says, and it doesn't pass silently.
+    val tail: array<SaftInvoice> = []
+    for (i in 3 until good.size) tail.append(good[i])
+    val tailReport = saftVerifyChains(chainFile(tail), key)
+    expect(tailReport.ok(), "the missing start isn't a break")
+    expectEqual(tailReport.unverifiable, 1, "but the first can't be verified")
+    expectEqual(tailReport.verified, 2, "and the rest are")
+
+    // The first of a series numbered 1 must verify.
+    val forged = invoice(1, "10.00")
+    saftSignInvoice(forged, signer, despachoFirst)
+    expect(hasProblem(saftVerifyChains(chainFile([forged]), key), "bad_signature", "FT A/1"), "number 1 can't claim a previous document")
+
+    // Unsigned and integrated documents aren't verified, and are counted.
+    val unsignedReport = saftVerifyChains(chainFile([invoice(1, "10.00")]), key)
+    expectEqual(unsignedReport.unsigned, 1, "unsigned")
+    val status = SaftDocumentStatus("N", "2026-03-14T10:20:30", "ana", "I")
+    val integratedLines = [saleLine(1, "1", "10", vat("PT", "ISE", "0"), "Artigo 9.º do CIVA", "M07")]
+    val integrated = SaftInvoice("FT I/1", "0", status, "2026-03-14", "FT", "ana", "2026-03-14T10:20:30", "C1", integratedLines, saftComputeTotals(integratedLines), hash = despachoFirst, hashControl = "9999.1")
+    expectEqual(saftVerifyChains(chainFile([integrated]), key).integrated, 1, "integrated: another program's key")
+    val shortHash = invoice(1, "10.00")
+    shortHash.hash = "abc"
+    expect(hasProblem(saftVerifyChains(chainFile([shortHash])), "bad_hash", "FT A/1"), "a Hash of the wrong size")
+    expect(hasProblem(saftVerifyChains(chainFile([invoice(1, "1"), invoice(1, "1")])), "duplicate", "FT A/1"), "a repeated number")
+
+    // Cancelled documents stay in the chain with their Hash.
+    val c1 = invoice(1, "10.00")
+    val h = saftSignInvoice(c1, signer, "").hash
+    val cancelled = SaftInvoice("FT A/2", "0", normalStatus("A", "Anulada"), "2026-03-14", "FT", "ana", "2026-03-14T10:20:30", "C1", c1.lines, c1.totals)
+    val hc = saftSignInvoice(cancelled, signer, h).hash
+    val c3 = invoice(3, "10.00")
+    saftSignInvoice(c3, signer, hc)
+    expectEqual(saftVerifyChains(chainFile([c1, cancelled, c3]), key).verified, 3, "a cancelled document keeps its place in the chain")
+
+    // Movements and working documents chain the same, by their type.
+    val goods = movementOf("GT", 1, stdMovementLines())
+    val mh = saftSignMovement(goods, signer, "").hash
+    val goods2 = movementOf("GT", 2, stdMovementLines())
+    saftSignMovement(goods2, signer, mh)
+    val work = workOf("PF", 1, stdLines())
+    saftSignWorkDocument(work, signer, "")
+    expectEqual(saftVerifyChains(fileWith(goods = saftMovementOfGoods([goods, goods2]), work = saftWorkingDocuments([work])), key).verified, 3, "movements and working documents")
+
+    // Through the file: written, read, verified.
+    val generated = generatedFile(7, signer)
+    val written = saftWrite(generated)
+    expect(written.succeeded, "a signed file writes")
+    val read = saftRead(written.text).file
+    if (expect(read != null, "it reads") && read != null) {
+        val report = saftVerifyChains(read, key)
+        expect(report.ok(), "its chains verify after the round trip")
+        expect(report.verified > 0, "and it really verified some")
+    }
+    testsPassed()
+}

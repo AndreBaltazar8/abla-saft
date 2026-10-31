@@ -1,0 +1,122 @@
+import "../src/saft.ab"
+import "support/samples.ab"
+import "abla/fs"
+import "abla/test"
+import "abla/text"
+
+fun refused(file: SaftFile, code: string, label: string): void {
+    val r = saftWrite(file)
+    expect(!r.succeeded, "$label is refused")
+    var found = false
+    for (i in r.issues) if (i.code == code) found = true
+    expect(found, "$label reports $code")
+    return
+}
+
+fun header(name: string = "Exemplo", business: string = "", comment: string = ""): SaftFile {
+    val h = sampleHeader()
+    SaftFile(SaftHeader(h.companyId, h.taxRegistrationNumber, name, h.companyAddress, h.fiscalYear, h.startDate, h.endDate, h.dateCreated, h.productCompanyTaxId, h.productId, h.productVersion, businessName = business, headerComment = comment), sampleMaster())
+}
+
+fun withLine(line: SaftLine): SaftFile = fileWith(sales = saftSalesInvoices([invoiceOf("FT", "A", 1, "C1", [line])]))
+
+fun main: int {
+    // Golden files: compared byte for byte. tools/check-all.sh puts the same names through the XSD.
+    for (g in goldenFiles()) {
+        val r = saftWrite(g.file)
+        if (expect(r.succeeded, g.name + " writes: " + r.errorMessage))
+            expect(r.text == path("tests/golden/" + g.name + ".xml").readText(), g.name + " matches its golden file")
+    }
+
+    // The declaration AT's schema and demonstration file use, and the bytes it promises.
+    val plain = saftWrite(header("Açúcar & Filhos"))
+    expect(plain.text.startsWith("<?xml version=\"1.0\" encoding=\"Windows-1252\"?>\n<AuditFile xmlns=\"$saftNamespace\">"), "declaration and namespace")
+    expect(plain.text.contains("<CompanyName>A\xe7\xfacar &amp; Filhos</CompanyName>"), "accents are single bytes")
+    val outside = saftWrite(header("日本語 €"))
+    expect(outside.text.contains("<CompanyName>&#x65E5;&#x672C;&#x8A9E; \x80</CompanyName>"), "what 1252 lacks is a reference, and the euro is 0x80")
+    expect(saftWrite(header(), SaftWriteOptions(encoding = "UTF-8")).text.contains("encoding=\"UTF-8\""), "another encoding can be asked for")
+
+    // Limits count characters.
+    expect(saftWrite(header("ç".repeat(100))).succeeded, "100 two-byte characters fit in 100")
+    refused(header("ç".repeat(101)), "too_long", "101 characters")
+    refused(header(""), "too_short", "an empty mandatory field")
+    refused(header("Exemplo", "x".repeat(61)), "too_long", "BusinessName")
+    refused(header("Exemplo", "", "x".repeat(256)), "too_long", "HeaderComment")
+
+    // Every line kind of problem the XSD's assertions and choices have. tools/make-files.ab
+    // confirms the official XSD rejects the same ones.
+    refused(withLine(saleLine(1, "1", "5", vat("PT", "ISE", "0"))), "assert", "a zero rate without a reason")
+    refused(withLine(saleLine(1, "1", "5", vat("PT", "NOR", "23"), "Artigo 9.º", "M07")), "assert", "a rate with a reason")
+    refused(withLine(saleLine(1, "1", "5", vat("PT", "ISE", "0"), "Artigo 9.º do CIVA")), "assert", "a reason without a code")
+    refused(withLine(saleLine(1, "1", "5", vat("PT", "ISE", "0"), "Art 9", "M07")), "too_short", "a short reason")
+    refused(withLine(saleLine(1, "1", "5", vat("PT", "ISE", "0"), "Artigo 9.º do CIVA", "7")), "bad_pattern", "a bad exemption code")
+    refused(withLine(saleLine(1, "1", "-5", vat("PT", "NOR", "23"))), "negative", "a negative amount")
+    refused(withLine(saleLine(1, "1", "5", null)), "required", "an invoice line without Tax")
+    refused(withLine(saleLine(1, "1", "5", vat("XX", "NOR", "23"))), "not_allowed", "an unknown tax region")
+    refused(withLine(saleLine(1, "1", "5", SaftTax("IVA", "PT", "NOR"))), "choice", "a Tax with neither rate nor amount")
+    refused(withLine(saleLine(1, "1", "5", SaftTax("IVA", "PT", "NOR", percentage = dec("23"), amount = dec("1")))), "choice", "a Tax with both")
+
+    // Control totals: a section built by hand has to add up.
+    val d = invoiceOf("FT", "A", 1, "C1", stdLines())
+    refused(fileWith(sales = SaftSalesInvoices(2, dec("0.00"), dec("26.00"), [d])), "control_total", "a wrong count")
+    refused(fileWith(sales = SaftSalesInvoices(1, dec("0.00"), dec("99.99"), [d])), "control_total", "a wrong sum")
+    refused(fileWith(goods = SaftMovementOfGoods(9, dec("1"), array<SaftStockMovement>())), "control_total", "a wrong movement count")
+
+    // Totals leave out what the Portaria says, and count what it says.
+    val c = saftSalesInvoices([
+        invoiceOf("FT", "A", 1, "C1", [saleLine(1, "1", "10.00", vat("PT", "NOR", "23"))]),
+        invoiceOf("FT", "A", 2, "C1", [saleLine(1, "1", "20.00", vat("PT", "NOR", "23"))], normalStatus("A", "Anulada")),
+        invoiceOf("FT", "A", 3, "C1", [saleLine(1, "1", "40.00", vat("PT", "NOR", "23"))], normalStatus("F", "Faturado")),
+        invoiceOf("FT", "A", 4, "C1", [saleLine(1, "1", "80.00", vat("PT", "NOR", "23"))], normalStatus("R")),
+        invoiceOf("NC", "A", 5, "C1", [refundLine(1, "1", "5.00", vat("PT", "NOR", "23"), "FT A/1")])
+    ])
+    expectEqual(c.numberOfEntries, 5, "all documents count")
+    expectEqual(c.totalCredit.text(), "90.00", "A and F leave TotalCredit")
+    expectEqual(c.totalDebit.text(), "5.00", "NC goes to TotalDebit")
+
+    val m = saftMovementOfGoods([
+        movementOf("GT", 1, stdMovementLines()),
+        movementOf("GT", 2, stdMovementLines(), normalStatus("A", "Anulada")),
+        movementOf("GT", 3, stdMovementLines(), normalStatus("F", "Faturada"))
+    ])
+    expectEqual(m.numberOfMovementLines, 6, "the lines of an annulled movement count")
+    expectEqual(m.totalQuantityIssued.text(), "15.00", "its quantity doesn't; an F's does")
+
+    val w = saftWorkingDocuments([
+        workOf("PF", 1, stdLines()),
+        workOf("PF", 2, stdLines(), normalStatus("A", "Anulado")),
+        workOf("PF", 3, stdLines(), normalStatus("F", "Faturado"))
+    ])
+    expectEqual(w.numberOfEntries, 3, "working documents count")
+    expectEqual(w.totalCredit.text(), saftLinesCredit(stdLines()).times(dec("2")).text(), "the Portaria leaves only A out of WorkingDocuments")
+
+    val p = saftPayments([paymentOf("RG", 1, "123.00"), paymentOf("RG", 2, "123.00", normalStatus("A", "Anulado"))])
+    expectEqual(p.numberOfEntries, 2, "receipts count")
+    expectEqual(p.totalCredit.text(), "100.00", "an annulled receipt doesn't")
+
+    // Rounding and tax, by hand. 3 x 0.335 = 1.005, the case a double rounds down.
+    val t1 = saftComputeTotals([saleLine(1, "3", "0.335", vat("PT", "NOR", "23"))])
+    expectEqual(t1.netTotal.text(), "1.01", "net rounds half up, from the exact 1.005")
+    expectEqual(t1.taxPayable.text(), "0.23", "tax on the exact 1.005: 0.23115")
+    expectEqual(t1.grossTotal.text(), "1.24", "gross")
+    // Per rate, not per line: three lines of 0.10 at 23% are 0.069, so 0.07, not 3 x 0.02.
+    val t2 = saftComputeTotals([saleLine(1, "1", "0.10", vat("PT", "NOR", "23")), saleLine(2, "1", "0.10", vat("PT", "NOR", "23")), saleLine(3, "1", "0.10", vat("PT", "NOR", "23"))])
+    expectEqual(t2.taxPayable.text(), "0.07", "tax is rounded per rate")
+    // The same rate and code in two regions stays apart, and so does a different rate.
+    val t3 = saftComputeTotals([saleLine(1, "1", "100", vat("PT", "NOR", "23")), saleLine(2, "1", "100", vat("PT-AC", "NOR", "16")), saleLine(3, "1", "100", vat("PT-MA", "NOR", "22"))])
+    expectEqual(t3.taxPayable.text(), "61.00", "regions: 23 + 16 + 22")
+    expectEqual(t3.grossTotal.text(), "361.00", "regions gross")
+    val t4 = saftComputeTotals([saleLine(1, "1", "50", vat("PT", "ISE", "0"), "Artigo 9.º do CIVA", "M07"), saleLine(2, "1", "50", vat("PT", "RED", "6"))])
+    expectEqual(t4.taxPayable.text(), "3.00", "exempt lines add no tax")
+    val t5 = saftComputeTotals([saleLine(1, "3", "10", SaftTax("IS", "PT", "1.1", amount = dec("5.00")))])
+    expectEqual(t5.taxPayable.text(), "15.00", "a fixed stamp duty multiplies by quantity")
+    val t6 = saftComputeTotals([refundLine(1, "1", "100", vat("PT", "NOR", "23"), "FT A/1")])
+    expectEqual(t6.grossTotal.text(), "123.00", "a credit note's totals are absolute")
+    val t7 = saftComputeTotals([saleLine(1, "1", "100", vat("PT", "NOR", "23")), refundLine(2, "1", "30", vat("PT", "NOR", "23"), "FT A/1")])
+    expectEqual(t7.netTotal.text(), "70.00", "debit lines subtract")
+    expectEqual(t7.taxPayable.text(), "16.10", "and so does their tax")
+
+    // AT's demonstration file: 317.45 USD at 0.74075 is its GrossTotal of 235.15 EUR.
+    expectEqual(saftEurosFromForeign(dec("317.45"), dec("0.74075")).text(), "235.15", "foreign currency")
+    testsPassed()
+}

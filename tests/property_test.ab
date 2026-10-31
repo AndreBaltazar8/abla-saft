@@ -1,0 +1,50 @@
+// Random files, with a repeatable generator: what's true of all of them. tools/check-all.sh
+// also puts generated files through the official XSD and recomputes totals in Python.
+import "../src/saft.ab"
+import "support/samples.ab"
+import "abla/test"
+
+fun sumLines(lines: array<SaftLine>): SaftDecimal {
+    var sum = saftDecimalZero()
+    for (line in lines) sum = sum.plus(saftLineBase(line))
+    sum
+}
+
+fun main: int {
+    for (seed in 1 until 301) {
+        val file = generatedFile(seed, FakeSigner())
+        val first = saftWrite(file)
+        if (!expect(first.succeeded, "seed $seed writes: ${first.errorMessage}")) return testsPassed()
+        val read = saftRead(first.text)
+        val back = read.file
+        if (!expect(back != null, "seed $seed reads: ${read.error}") || back == null) return testsPassed()
+        expectEqual(read.issues.size, 0, "seed $seed reads cleanly")
+        expect(!saftHasErrors(saftCheck(back)), "seed $seed checks after reading")
+        if (!expect(saftWrite(back).text == first.text, "seed $seed rewrites the same bytes")) return testsPassed()
+        val report = saftVerifyChains(back)
+        expect(report.ok(), "seed $seed: its chains have no gap")
+        val sales = back.salesInvoices
+        if (sales != null) {
+            var credit = saftDecimalZero()
+            var debit = saftDecimalZero()
+            for (d in sales.invoices) {
+                val t = d.totals
+                expect(t.netTotal.plus(t.taxPayable).equalTo(t.grossTotal), "seed $seed: gross is net plus tax")
+                expect(t.netTotal.equalTo(sumLines(d.lines).abs().rounded(2)), "seed $seed: net is the lines' sum")
+                expect(!t.grossTotal.isNegative(), "seed $seed: no negative totals")
+                if (d.status.status != "A") {
+                    credit = credit.plus(saftLinesCredit(d.lines))
+                    debit = debit.plus(saftLinesDebit(d.lines))
+                }
+                expectEqual(d.hash.size, saftHashCharacters, "seed $seed: Hash size")
+                expectEqual(saftPrintedCharacters(d.hash).size, 4, "seed $seed: four printed characters")
+                val qr = saftQrForInvoice(back, d)
+                expect(qr.ok, "seed $seed: QR ${qr.error}")
+                expect(qr.message.contains("*O:" + t.grossTotal.money() + "*"), "seed $seed: QR has the total")
+            }
+            expect(sales.totalCredit.equalTo(credit), "seed $seed: TotalCredit")
+            expect(sales.totalDebit.equalTo(debit), "seed $seed: TotalDebit")
+        }
+    }
+    testsPassed()
+}

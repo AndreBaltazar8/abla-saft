@@ -1,0 +1,44 @@
+// sign-series <private key PEM> <output dir>: signs series of each signed table with a real
+// key, writes the file, QR images and messages, for tools/check-signatures.sh to verify
+// with openssl. Never holds a key of its own; the script makes a throwaway one.
+import "../src/saft.ab"
+import "../tests/support/samples.ab"
+import "abla/fs"
+import "abla/io"
+import "abla/process"
+
+fun main: int {
+    val made = saftRsaSignerFromPem(path(processArgument(0)).readText(), 1)
+    val signer = made.signer
+    if (signer == null) {
+        eprintln(made.error)
+        return 1
+    }
+    val dir = processArgument(1)
+    path(dir).createDirectories()
+    val file = generatedFile(4242, signer)
+    val written = saftWrite(file)
+    if (!written.succeeded) {
+        eprintln(written.errorMessage)
+        return 1
+    }
+    path(dir + "/signed.xml").writeText(written.text)
+    val sales = file.salesInvoices
+    if (sales == null) return 1
+    val qr = saftQrForInvoice(file, sales.invoices[0], "NU;10.00")
+    if (!qr.ok) {
+        eprintln(qr.error)
+        return 1
+    }
+    val image = saftQrImage(qr.message)
+    if (!image.ok) {
+        eprintln(image.error)
+        return 1
+    }
+    path(dir + "/qr-message.txt").writeText(qr.message)
+    path(dir + "/qr.png").writeText(image.png)
+    path(dir + "/qr-printed.txt").writeText(saftPrintedCharacters(sales.invoices[0].hash))
+    val big = saftQrImage(qr.message, 6, 4)
+    path(dir + "/qr-big.png").writeText(big.png)
+    0
+}
