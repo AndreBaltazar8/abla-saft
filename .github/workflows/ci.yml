@@ -25,8 +25,11 @@ jobs:
       - name: Download AT's schema, demonstration file and texts, by hash
         run: tools/fetch-sources.sh
       - name: Generated files through the official XSD and xmllint, decimals against Python
-        run: nix-shell -p libxml2 'python3.withPackages(p: [p.xmlschema])' --run 'tools/check-all.sh 200'
+        run: |
+          nix-shell -p libxml2 'python3.withPackages(p: [p.xmlschema])' --run 'tools/check-all.sh 200'
       - name: Signatures against openssl, QR images through zbar
-        run: nix-shell -p openssl zbar 'python3.withPackages(p: [p.xmlschema])' --run tools/check-signatures.sh
+        run: |
+          nix-shell -p openssl zbar 'python3.withPackages(p: [p.xmlschema])' --run tools/check-signatures.sh
       - name: AT's demonstration file through the XSD, reader and writer
-        run: nix-shell -p libxml2 'python3.withPackages(p: [p.xmlschema])' --run tools/check-at-demo.sh
+        run: |
+          nix-shell -p libxml2 'python3.withPackages(p: [p.xmlschema])' --run tools/check-at-demo.sh
