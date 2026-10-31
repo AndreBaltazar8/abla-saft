@@ -1,0 +1,524 @@
+// Document signatures: Portaria 363/2010, articles 6 and 7, and Despacho 8632/2014,
+// sections 2 and 4 to 7. RSA with PKCS#1 v1.5 and SHA-1 on a 1024-bit key, base 64 on one
+// line, 172 characters. The certificate and key registration with AT are the program
+// producer's; a key made here signs correctly in form and is known to AT only if
+// declared to it.
+import "abla/bytes"
+import "abla/crypto"
+import "abla/text"
+import "check.ab"
+import "decimal.ab"
+import "model.ab"
+
+// The Despacho fixes 1024 bits (6.2, 7.1), and the XSD caps Hash at 172 characters:
+// base 64 of 128 bytes.
+val saftSignatureBytes = 128
+val saftHashCharacters = 172
+
+// --- DER, adapted from abla-pdf ------------------------------------------------------
+
+private class Der(val tag: int, val begin: int, val end: int) {
+    fun ok(): bool = tag >= 0
+}
+
+private fun derAt(data: string, at: int, limit: int): Der {
+    val bad = Der(-1, at, at)
+    if (at < 0 || at + 2 > limit || limit > data.size) return bad
+    val tag = data[at]
+    if ((tag & 31) == 31) return bad
+    val first = data[at + 1]
+    var p = at + 2
+    var length = first
+    if (first == 0x80) return bad
+    if (first > 0x80) {
+        val count = first & 127
+        if (count > 4 || p + count > limit) return bad
+        length = 0
+        for (i in 0 until count) length = (length << 8) | data[p + i]
+        p = p + count
+    }
+    if (p + length > limit) return bad
+    Der(tag, p, p + length)
+}
+
+private fun stripZeros(bytes: string): string {
+    var i = 0
+    while (i < bytes.size && bytes[i] == 0) i = i + 1
+    bytes.slice(i, bytes.size)
+}
+
+// The DER inside the first PEM block, or "".
+private fun pemBody(pem: string): string {
+    val begin = pem.indexOf("-----BEGIN")
+    if (begin < 0) return ""
+    val bodyAt = pem.indexOf("\n", begin)
+    val end = pem.indexOf("-----END", begin)
+    if (bodyAt < 0 || end < bodyAt) return ""
+    val clean = byteBuffer()
+    for (b in pem.slice(bodyAt, end)) if (b > 32) clean.appendByteValue(b)
+    base64Decode(clean.toText())
+}
+
+// --- Big integers: little-endian 28-bit limbs, Montgomery multiplication, as abla-pdf -
+
+private val LIMB_BITS = 28
+private val LIMB_MASK = 0xfffffff
+
+private fun limbsFromBytes(bytes: string): array<int> {
+    val out: array<int> = []
+    var accumulator = 0
+    var bits = 0
+    var i = bytes.size - 1
+    while (i >= 0) {
+        accumulator = accumulator | (bytes[i] << bits)
+        bits = bits + 8
+        if (bits >= LIMB_BITS) {
+            out.append(accumulator & LIMB_MASK)
+            accumulator = accumulator >> LIMB_BITS
+            bits = bits - LIMB_BITS
+        }
+        i = i - 1
+    }
+    if (bits > 0) out.append(accumulator)
+    out
+}
+
+private fun bytesFromLimbs(limbs: array<int>, size: int): string {
+    val digits = filledArray(size, 0)
+    var accumulator = 0
+    var bits = 0
+    var at = size - 1
+    var i = 0
+    while (at >= 0) {
+        while (bits < 8 && i < limbs.size) {
+            accumulator = accumulator | (limbs[i] << bits)
+            bits = bits + LIMB_BITS
+            i = i + 1
+        }
+        digits[at] = accumulator & 255
+        accumulator = accumulator >> 8
+        bits = if (bits >= 8) bits - 8 else 0
+        at = at - 1
+    }
+    val out = byteBuffer()
+    for (d in digits) out.appendByteValue(d)
+    out.toText()
+}
+
+private fun compareLimbs(a: array<int>, b: array<int>): int {
+    var i = a.size - 1
+    while (i >= 0) {
+        val y = if (i < b.size) b[i] else 0
+        if (a[i] != y) return if (a[i] > y) 1 else -1
+        i = i - 1
+    }
+    0
+}
+
+private fun subtractInPlace(var a: array<int>, b: array<int>): void {
+    var borrow = 0
+    for (i in 0 until a.size) {
+        var v = a[i] - borrow - (if (i < b.size) b[i] else 0)
+        borrow = if (v < 0) 1 else 0
+        if (v < 0) v = v + (1 << LIMB_BITS)
+        a[i] = v
+    }
+    return
+}
+
+private class Modulus(val n: array<int>, val inverse: int, val rSquared: array<int>)
+
+private fun modulusFor(n: array<int>): Modulus {
+    // -n^-1 mod 2^28 by Newton's iteration.
+    val low = n[0]
+    var x = 1
+    for (i in 0 until 6) x = (x * (2 - low * x)) & LIMB_MASK
+    val inverse = (0 - x) & LIMB_MASK
+    // R^2 mod n by doubling, starting from 1.
+    val value = filledArray(n.size, 0)
+    value[0] = 1
+    for (i in 0 until 2 * n.size * LIMB_BITS) {
+        var carry = 0
+        for (k in 0 until value.size) {
+            val v = (value[k] << 1) | carry
+            value[k] = v & LIMB_MASK
+            carry = v >> LIMB_BITS
+        }
+        if (carry != 0 || compareLimbs(value, n) >= 0) subtractInPlace(value, n)
+    }
+    Modulus(n, inverse, value)
+}
+
+private fun montMul(a: array<int>, b: array<int>, m: Modulus): array<int> {
+    val n = m.n
+    val size = n.size
+    val t = filledArray(size + 2, 0)
+    for (i in 0 until size) {
+        var carry = 0
+        val bi = if (i < b.size) b[i] else 0
+        for (j in 0 until size) {
+            val v = t[j] + (if (j < a.size) a[j] else 0) * bi + carry
+            t[j] = v & LIMB_MASK
+            carry = v >> LIMB_BITS
+        }
+        var v = t[size] + carry
+        t[size] = v & LIMB_MASK
+        t[size + 1] = t[size + 1] + (v >> LIMB_BITS)
+        val q = (t[0] * m.inverse) & LIMB_MASK
+        v = t[0] + q * n[0]
+        carry = v >> LIMB_BITS
+        for (j in 1 until size) {
+            val w = t[j] + q * n[j] + carry
+            t[j - 1] = w & LIMB_MASK
+            carry = w >> LIMB_BITS
+        }
+        v = t[size] + carry
+        t[size - 1] = v & LIMB_MASK
+        t[size] = t[size + 1] + (v >> LIMB_BITS)
+        t[size + 1] = 0
+    }
+    val out = filledArray(size, 0)
+    for (i in 0 until size) out[i] = t[i]
+    if (t[size] != 0 || compareLimbs(out, n) >= 0) subtractInPlace(out, n)
+    out
+}
+
+// base^exponent mod the modulus, all big-endian byte strings. Square and multiply
+// always, which hides little: see SaftRsaSigner.
+private fun modPow(base: string, exponent: string, modulusBytes: string): string {
+    val n = limbsFromBytes(modulusBytes)
+    if (n.size == 0 || (n[0] & 1) == 0) return ""
+    val m = modulusFor(n)
+    val inMont = montMul(limbsFromBytes(base), m.rSquared, m)
+    val one = filledArray(n.size, 0)
+    one[0] = 1
+    var result = montMul(one, m.rSquared, m)
+    for (byte in exponent) {
+        var bit = 7
+        while (bit >= 0) {
+            result = montMul(result, result, m)
+            val multiplied = montMul(result, inMont, m)
+            if (((byte >> bit) & 1) == 1) result = multiplied
+            bit = bit - 1
+        }
+    }
+    bytesFromLimbs(montMul(result, one, m), modulusBytes.size)
+}
+
+// EMSA-PKCS1-v1_5 with the SHA-1 DigestInfo of RFC 8017, section 9.2, note 1.
+private fun pkcs1Sha1(message: string, size: int): string {
+    val info = "\x30\x21\x30\x09\x06\x05\x2b\x0e\x03\x02\x1a\x05\x00\x04\x14" + sha1(message)
+    if (size < info.size + 11) return ""
+    "\x00\x01" + "\xff".repeat(size - info.size - 3) + "\x00" + info
+}
+
+// --- Keys and signers ----------------------------------------------------------------
+
+// Whatever holds the private key. A device or remote service implements this.
+interface SaftSigner {
+    // The sequential key version recorded in HashControl (Despacho 2.1.3).
+    fun keyVersion(): int
+    // The raw signature over `message`, RSA PKCS#1 v1.5 with SHA-1, or "" on failure.
+    fun sign(message: string): string
+}
+
+// A key in memory. This pure Abla code isn't hardened against timing or memory
+// disclosure, and Despacho 3.1.4 asks that the private key be protected "even during
+// the signature process": that protection is the application's.
+class SaftRsaSigner(val modulus: string, val exponent: string, val version: int) : SaftSigner {
+    fun keyVersion(): int = version
+
+    fun sign(message: string): string {
+        val encoded = pkcs1Sha1(message, modulus.size)
+        if (encoded == "") return ""
+        modPow(encoded, exponent, modulus)
+    }
+}
+
+class SaftRsaSignerResult(val signer: SaftRsaSigner?, val error: string)
+
+// From a PEM private key, PKCS#1 ("RSA PRIVATE KEY") or PKCS#8 ("PRIVATE KEY"),
+// unencrypted. Refuses any modulus but 1024 bits, whose signature wouldn't fit Hash.
+fun saftRsaSignerFromPem(pem: string, version: int = 1): SaftRsaSignerResult {
+    val der = pemBody(pem)
+    val fail = SaftRsaSignerResult(null, "not an unencrypted RSA private key in PEM")
+    val outer = derAt(der, 0, der.size)
+    if (outer.tag != 0x30) return fail
+    val first = derAt(der, outer.begin, outer.end)
+    if (first.tag != 2) return fail
+    val next = derAt(der, first.end, outer.end)
+    var data = der
+    var body = outer
+    if (next.tag == 0x30) {
+        val octets = derAt(der, next.end, outer.end)
+        if (octets.tag != 4) return fail
+        data = der.slice(octets.begin, octets.end)
+        body = derAt(data, 0, data.size)
+        if (body.tag != 0x30) return fail
+    }
+    val v = derAt(data, body.begin, body.end)
+    val n = derAt(data, v.end, body.end)
+    val e = derAt(data, n.end, body.end)
+    val d = derAt(data, e.end, body.end)
+    if (v.tag != 2 || n.tag != 2 || e.tag != 2 || d.tag != 2) return fail
+    val modulus = stripZeros(data.slice(n.begin, n.end))
+    if (modulus.size != saftSignatureBytes)
+        return SaftRsaSignerResult(null, "the key has ${modulus.size * 8} bits; Despacho 8632/2014 requires 1024")
+    if (version < 1) return SaftRsaSignerResult(null, "key versions are sequential integers from 1")
+    SaftRsaSignerResult(SaftRsaSigner(modulus, stripZeros(data.slice(d.begin, d.end)), version), "")
+}
+
+class SaftRsaPublicKey(val modulus: string, val exponent: string) {
+    fun ok(): bool = modulus.size > 0 && exponent.size > 0
+}
+
+// From a PEM public key ("PUBLIC KEY" or "RSA PUBLIC KEY"). Not ok() on anything else.
+fun saftRsaPublicKeyFromPem(pem: string): SaftRsaPublicKey {
+    val der = pemBody(pem)
+    val bad = SaftRsaPublicKey("", "")
+    val outer = derAt(der, 0, der.size)
+    if (outer.tag != 0x30) return bad
+    val first = derAt(der, outer.begin, outer.end)
+    var data = der
+    var body = outer
+    if (first.tag == 0x30) {
+        val bits = derAt(der, first.end, outer.end)
+        if (bits.tag != 3 || bits.end <= bits.begin) return bad
+        data = der.slice(bits.begin + 1, bits.end)
+        body = derAt(data, 0, data.size)
+        if (body.tag != 0x30) return bad
+    }
+    val n = derAt(data, body.begin, body.end)
+    val e = derAt(data, n.end, body.end)
+    if (n.tag != 2 || e.tag != 2) return bad
+    SaftRsaPublicKey(stripZeros(data.slice(n.begin, n.end)), stripZeros(data.slice(e.begin, e.end)))
+}
+
+// --- Signing -------------------------------------------------------------------------
+
+// The message of article 6 n.º 1: the fields joined by ";", with no line ending, and
+// the previous Hash empty for the first document of a series (Despacho 2.1.5, 7.1).
+fun saftSignatureMessage(date: string, systemEntryDate: string, number: string, grossTotal: SaftDecimal, previousHash: string): string =
+    date + ";" + systemEntryDate + ";" + number + ";" + grossTotal.money() + ";" + previousHash
+
+class SaftSignature(val ok: bool, val hash: string, val hashControl: string, val message: string, val error: string)
+
+private fun signFailure(error: string): SaftSignature = SaftSignature(false, "", "", "", error)
+
+// Signs the fields. The GrossTotal in the message is in euros with two decimals
+// (Despacho 2.1.7, 2.6.7), and "0.00" for a document with no value (2.1.6).
+fun saftSign(signer: SaftSigner, date: string, systemEntryDate: string, number: string, grossTotal: SaftDecimal, previousHash: string): SaftSignature {
+    if (!saftValidDate(date)) return signFailure("the date must be YYYY-MM-DD")
+    if (!saftValidTimestamp(systemEntryDate)) return signFailure("SystemEntryDate must be YYYY-MM-DDThh:mm:ss")
+    if (!saftValidDocumentNumber(number)) return signFailure("the number must look like FT A/1")
+    // The Despacho gives "Charset = UTF-8" only for the certificate, so what bytes
+    // another verifier expects for an accented number is unconfirmed. Refuse it.
+    for (c in number) if (c > 126) return signFailure("the document number isn't plain ASCII")
+    if (grossTotal.isNegative()) return signFailure("GrossTotal is negative")
+    if (previousHash != "" && previousHash.size != saftHashCharacters) return signFailure("the previous Hash isn't 172 characters, or empty for the first document")
+    if (signer.keyVersion() < 1) return signFailure("key versions are sequential integers from 1")
+    val message = saftSignatureMessage(date, systemEntryDate, number, grossTotal, previousHash)
+    val raw = signer.sign(message)
+    if (raw.size != saftSignatureBytes) return signFailure("the signer returned ${raw.size} bytes, not $saftSignatureBytes")
+    val hash = base64Encode(raw)
+    SaftSignature(true, hash, "${signer.keyVersion()}", message, "")
+}
+
+// Each of these signs a document and stores Hash and HashControl in it. `previousHash`
+// is the Hash of the last document of the same type and series, or "" for the first.
+fun saftSignInvoice(var document: SaftInvoice, signer: SaftSigner, previousHash: string): SaftSignature {
+    val s = saftSign(signer, document.invoiceDate, document.systemEntryDate, document.invoiceNo, document.totals.grossTotal, previousHash)
+    if (s.ok) {
+        document.hash = s.hash
+        document.hashControl = s.hashControl
+    }
+    s
+}
+
+fun saftSignMovement(var document: SaftStockMovement, signer: SaftSigner, previousHash: string): SaftSignature {
+    val s = saftSign(signer, document.movementDate, document.systemEntryDate, document.documentNumber, document.totals.grossTotal, previousHash)
+    if (s.ok) {
+        document.hash = s.hash
+        document.hashControl = s.hashControl
+    }
+    s
+}
+
+fun saftSignWorkDocument(var document: SaftWorkDocument, signer: SaftSigner, previousHash: string): SaftSignature {
+    val s = saftSign(signer, document.workDate, document.systemEntryDate, document.documentNumber, document.totals.grossTotal, previousHash)
+    if (s.ok) {
+        document.hash = s.hash
+        document.hashControl = s.hashControl
+    }
+    s
+}
+
+// HashControl of a document recovered from a manual one, as 1-FTM abc/00001 (Despacho
+// 2.4.5): the key version, the type, M, a space and the manual series and number.
+fun saftManualHashControl(version: int, type: string, manualNumber: string): string =
+    "$version-${type}M $manualNumber"
+
+// And of one recovered from a duplicate, as 1-FTD XY 2013A/00099 (Despacho 2.5.5).
+fun saftDuplicateHashControl(version: int, type: string, documentNumber: string): string =
+    "$version-${type}D $documentNumber"
+
+// And of a document integrated from another certified program, as 9999.1 (Despacho
+// 2.3.4 e)): its certificate and key version.
+fun saftIntegratedHashControl(certificateNumber: int, version: int): string =
+    "$certificateNumber.$version"
+
+// True if `hash` is a valid signature of `message` under `key`.
+fun saftVerifySignature(key: SaftRsaPublicKey, message: string, hash: string): bool {
+    if (!key.ok() || hash.size != saftHashCharacters) return false
+    val raw = base64Decode(hash)
+    if (raw.size != key.modulus.size) return false
+    val expected = pkcs1Sha1(message, key.modulus.size)
+    expected != "" && modPow(raw, key.exponent, key.modulus) == expected
+}
+
+// The four characters at positions 1, 11, 21 and 31 (article 6 n.º 3 a)), or "" if
+// `hash` isn't long enough, as with the "0" of an unsigned document.
+fun saftPrintedCharacters(hash: string): string {
+    if (hash.size < 31) return ""
+    hash.slice(0, 1) + hash.slice(10, 11) + hash.slice(20, 21) + hash.slice(30, 31)
+}
+
+// Despacho 2.2.2: "AxAx-Processado por programa certificado n.º 0000/AT". Only for a
+// program AT has certified, under the number it gave; "" without four characters.
+fun saftProcessedByText(hash: string, certificateNumber: int): string {
+    val characters = saftPrintedCharacters(hash)
+    if (characters == "") return ""
+    characters + "-Processado por programa certificado n.º $certificateNumber/AT"
+}
+
+// Despacho 2.2.3, for documents that aren't signed, such as receipts.
+fun saftIssuedByText(certificateNumber: int): string =
+    "Emitido por programa certificado n.º $certificateNumber/AT"
+
+// --- Chain verification --------------------------------------------------------------
+
+class SaftChainProblem(val code: string, val document: string, val message: string)
+
+class SaftChainReport(
+    val problems: array<SaftChainProblem>,
+    // Signatures that verified.
+    val verified: int,
+    // Hash "0": documents with no signature, nothing to verify.
+    val unsigned: int,
+    // SourceBilling I: signed by another program with its key (Despacho 2.3.2).
+    val integrated: int,
+    // First documents of a series whose number isn't 1 and that don't verify with an
+    // empty previous Hash: the previous document is outside the file.
+    val unverifiable: int
+) {
+    fun ok(): bool = problems.size == 0
+}
+
+private class ChainDocument(
+    val number: string,
+    val sequence: int,
+    val date: string,
+    val entry: string,
+    val gross: SaftDecimal,
+    val hash: string,
+    val origin: string
+)
+
+private class ChainSeries(val key: string, val documents: array<ChainDocument>) {
+    // By sequence number, from the end: files nearly always come in order.
+    fun insert(document: ChainDocument): void {
+        documents.append(document)
+        var i = documents.size - 1
+        while (i > 0 && documents[i - 1].sequence > documents[i].sequence) {
+            val moved = documents[i - 1]
+            documents[i - 1] = documents[i]
+            documents[i] = moved
+            i = i - 1
+        }
+        return
+    }
+}
+
+private fun sequenceOf(number: string): int {
+    val slash = number.lastIndexOf("/")
+    if (slash < 0 || number.size - slash - 1 > 18) return -1
+    var out = 0
+    for (i in slash + 1 until number.size) {
+        val c = number[i]
+        if (c < 48 || c > 57) return -1
+        out = out * 10 + (c - 48)
+    }
+    out
+}
+
+// Documents chain within "the same type and series" (article 6 n.º 1 e)).
+private fun addToSeries(var all: array<ChainSeries>, type: string, document: ChainDocument): void {
+    val space = document.number.indexOf(" ")
+    val slash = document.number.lastIndexOf("/")
+    val key = if (space > 0 && slash > space) type + " " + document.number.slice(0, slash) else type + " " + document.number
+    var at = -1
+    for (i in 0 until all.size) if (all[i].key == key) at = i
+    if (at < 0) {
+        all.append(ChainSeries(key, array<ChainDocument>()))
+        at = all.size - 1
+    }
+    all[at].insert(document)
+    return
+}
+
+// Walks each series of signed tables in sequence order. With a key, every signature is
+// checked against the previous document's Hash, so a changed field, a changed or
+// missing Hash, and a removed or moved document all break it. Without one, only the
+// sequence and the form of each Hash can be checked. Removing the first documents of
+// a file, or all of a series, can't be seen from the file alone.
+fun saftVerifyChains(file: SaftFile, key: SaftRsaPublicKey? = null): SaftChainReport {
+    val all: array<ChainSeries> = []
+    val sales = file.salesInvoices
+    if (sales != null)
+        for (d in sales.invoices)
+            addToSeries(all, d.invoiceType, ChainDocument(d.invoiceNo, sequenceOf(d.invoiceNo), d.invoiceDate, d.systemEntryDate, d.totals.grossTotal, d.hash, d.status.sourceBilling))
+    val goods = file.movementOfGoods
+    if (goods != null)
+        for (d in goods.movements)
+            addToSeries(all, d.movementType, ChainDocument(d.documentNumber, sequenceOf(d.documentNumber), d.movementDate, d.systemEntryDate, d.totals.grossTotal, d.hash, d.status.sourceBilling))
+    val work = file.workingDocuments
+    if (work != null)
+        for (d in work.documents)
+            addToSeries(all, d.workType, ChainDocument(d.documentNumber, sequenceOf(d.documentNumber), d.workDate, d.systemEntryDate, d.totals.grossTotal, d.hash, d.status.sourceBilling))
+
+    val problems: array<SaftChainProblem> = []
+    var verified = 0
+    var unsigned = 0
+    var integrated = 0
+    var unverifiable = 0
+    for (series in all) {
+        var previous = ""
+        var previousSequence = -1
+        var previousYear = ""
+        for (d in series.documents) {
+            if (d.sequence < 0) problems.append(SaftChainProblem("bad_number", d.number, "the sequence number can't be read"))
+            else if (previousSequence >= 0 && d.sequence == previousSequence) problems.append(SaftChainProblem("duplicate", d.number, "the sequence number repeats"))
+            else if (previousSequence >= 0 && d.sequence != previousSequence + 1) problems.append(SaftChainProblem("sequence_gap", d.number, "follows number $previousSequence"))
+            val year = if (d.date.size >= 4) d.date.slice(0, 4) else ""
+            if (d.hash == "0") unsigned = unsigned + 1
+            else if (d.origin == "I") integrated = integrated + 1
+            else if (d.hash.size != saftHashCharacters) problems.append(SaftChainProblem("bad_hash", d.number, "Hash has ${d.hash.size} characters, not $saftHashCharacters"))
+            else if (key != null) {
+                if (saftVerifySignature(key, saftSignatureMessage(d.date, d.entry, d.number, d.gross, previous), d.hash)) verified = verified + 1
+                else {
+                    val empty = saftSignatureMessage(d.date, d.entry, d.number, d.gross, "")
+                    val restarts = saftVerifySignature(key, empty, d.hash)
+                    // A series running over years may restart its chain each year (Despacho 2.1.5).
+                    if (restarts && previousSequence >= 0 && year != previousYear) verified = verified + 1
+                    else if (restarts && previousSequence < 0) verified = verified + 1
+                    else if (previousSequence < 0 && d.sequence != 1) unverifiable = unverifiable + 1
+                    else problems.append(SaftChainProblem("bad_signature", d.number, "the signature doesn't match the fields and the previous Hash"))
+                }
+            }
+            previous = d.hash
+            previousSequence = d.sequence
+            previousYear = year
+        }
+    }
+    SaftChainReport(problems, verified, unsigned, integrated, unverifiable)
+}
