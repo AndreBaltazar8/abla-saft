@@ -1,0 +1,334 @@
+// The billing file of SAF-T (PT) 1.04_01 as types. Field names follow the XSD. Text
+// and dates are strings, "" meaning an absent optional field; amounts are SaftDecimal,
+// null meaning absent. Dates are "YYYY-MM-DD", timestamps "YYYY-MM-DDThh:mm:ss"
+// (Portaria 302/2016, Annex I, 1 j)). Accounting tables (GeneralLedgerAccounts,
+// GeneralLedgerEntries) aren't modelled: they aren't part of a billing file.
+import "decimal.ab"
+
+val saftAuditFileVersion = "1.04_01"
+val saftNamespace = "urn:OECD:StandardAuditFile-Tax:PT_1.04_01"
+val saftFinalConsumerTaxId = "999999990"
+val saftUnknown = "Desconhecido"
+
+class SaftAddress(
+    val addressDetail: string,
+    val city: string,
+    val postalCode: string,
+    val country: string,
+    val buildingNumber: string = "",
+    val streetName: string = "",
+    val region: string = ""
+)
+
+class SaftHeader(
+    val companyId: string,
+    val taxRegistrationNumber: string,
+    val companyName: string,
+    val companyAddress: SaftAddress,
+    val fiscalYear: int,
+    val startDate: string,
+    val endDate: string,
+    val dateCreated: string,
+    val productCompanyTaxId: string,
+    val productId: string,
+    val productVersion: string,
+    val taxAccountingBasis: string = "F",
+    val businessName: string = "",
+    val currencyCode: string = "EUR",
+    val taxEntity: string = "Global",
+    val softwareCertificateNumber: int = 0,
+    val headerComment: string = "",
+    val telephone: string = "",
+    val fax: string = "",
+    val email: string = "",
+    val website: string = ""
+)
+
+class SaftCustomer(
+    val customerId: string,
+    val customerTaxId: string,
+    val companyName: string,
+    val billingAddress: SaftAddress,
+    val accountId: string = saftUnknown,
+    val contact: string = "",
+    val shipToAddresses: array<SaftAddress> = array<SaftAddress>(),
+    val telephone: string = "",
+    val fax: string = "",
+    val email: string = "",
+    val website: string = "",
+    val selfBillingIndicator: int = 0
+)
+
+class SaftSupplier(
+    val supplierId: string,
+    val supplierTaxId: string,
+    val companyName: string,
+    val billingAddress: SaftAddress,
+    val accountId: string = saftUnknown,
+    val contact: string = "",
+    val shipFromAddresses: array<SaftAddress> = array<SaftAddress>(),
+    val telephone: string = "",
+    val fax: string = "",
+    val email: string = "",
+    val website: string = "",
+    val selfBillingIndicator: int = 0
+)
+
+class SaftProduct(
+    val productType: string,
+    val productCode: string,
+    val productDescription: string,
+    val productNumberCode: string,
+    val productGroup: string = "",
+    val cnCodes: array<string> = array<string>(),
+    val unNumbers: array<string> = array<string>()
+)
+
+// Exactly one of percentage and amount.
+class SaftTaxEntry(
+    val taxType: string,
+    val taxCountryRegion: string,
+    val taxCode: string,
+    val description: string,
+    val percentage: SaftDecimal? = null,
+    val amount: SaftDecimal? = null,
+    val taxExpirationDate: string = ""
+)
+
+class SaftMasterFiles(
+    val customers: array<SaftCustomer> = array<SaftCustomer>(),
+    val suppliers: array<SaftSupplier> = array<SaftSupplier>(),
+    val products: array<SaftProduct> = array<SaftProduct>(),
+    val taxTable: array<SaftTaxEntry> = array<SaftTaxEntry>()
+)
+
+class SaftDocumentStatus(
+    // N, S, A, R, F for invoices; N, T, A, F, R for movements; N, A, F for working
+    // documents; N, A for receipts.
+    val status: string,
+    val statusDate: string,
+    val sourceId: string,
+    val sourceBilling: string = "P",
+    val reason: string = ""
+)
+
+class SaftWarehouse(val warehouseId: string = "", val locationId: string = "")
+
+class SaftShippingPoint(
+    val deliveryIds: array<string> = array<string>(),
+    val deliveryDate: string = "",
+    val warehouses: array<SaftWarehouse> = array<SaftWarehouse>(),
+    val address: SaftAddress? = null
+)
+
+class SaftOrderReference(val originatingOn: string = "", val orderDate: string = "")
+
+class SaftLineReference(val reference: string = "", val reason: string = "")
+
+// Exactly one of percentage and amount. The code is RED, INT, NOR, ISE, OUT or NS for
+// VAT, the verba or ISE for stamp duty.
+class SaftTax(
+    val taxType: string,
+    val taxCountryRegion: string,
+    val taxCode: string,
+    val percentage: SaftDecimal? = null,
+    val amount: SaftDecimal? = null
+)
+
+// A line of an invoice, stock movement or working document. A movement has no
+// taxBase, taxPointDate or references; the check says so if they are set.
+class SaftLine(
+    val lineNumber: int,
+    val productCode: string,
+    val productDescription: string,
+    val quantity: SaftDecimal,
+    val unitOfMeasure: string,
+    val unitPrice: SaftDecimal,
+    val description: string,
+    val debitAmount: SaftDecimal? = null,
+    val creditAmount: SaftDecimal? = null,
+    val tax: SaftTax? = null,
+    val taxPointDate: string = "",
+    val taxExemptionReason: string = "",
+    val taxExemptionCode: string = "",
+    val settlementAmount: SaftDecimal? = null,
+    val taxBase: SaftDecimal? = null,
+    val orderReferences: array<SaftOrderReference> = array<SaftOrderReference>(),
+    val references: array<SaftLineReference> = array<SaftLineReference>(),
+    val serialNumbers: array<string> = array<string>(),
+    val arcNumbers: array<string> = array<string>(),
+    val iecAmount: SaftDecimal? = null
+)
+
+// A document issued in another currency: amount is the GrossTotal in that currency,
+// and the document's own totals stay in euros.
+class SaftCurrency(val currencyCode: string, val currencyAmount: SaftDecimal, val exchangeRate: SaftDecimal)
+
+class SaftSettlement(
+    val settlementDiscount: string = "",
+    val settlementAmount: SaftDecimal? = null,
+    val settlementDate: string = "",
+    val paymentTerms: string = ""
+)
+
+class SaftPaymentMethod(val paymentAmount: SaftDecimal, val paymentDate: string, val paymentMechanism: string = "")
+
+class SaftWithholding(
+    val amount: SaftDecimal,
+    val withholdingTaxType: string = "",
+    val description: string = ""
+)
+
+class SaftDocumentTotals(
+    val taxPayable: SaftDecimal,
+    val netTotal: SaftDecimal,
+    val grossTotal: SaftDecimal,
+    val currency: SaftCurrency? = null,
+    // Invoices only.
+    val settlements: array<SaftSettlement> = array<SaftSettlement>(),
+    val payments: array<SaftPaymentMethod> = array<SaftPaymentMethod>(),
+    // Receipts only.
+    val settlementAmount: SaftDecimal? = null
+)
+
+class SaftInvoice(
+    val invoiceNo: string,
+    var atcud: string,
+    val status: SaftDocumentStatus,
+    val invoiceDate: string,
+    val invoiceType: string,
+    val sourceId: string,
+    val systemEntryDate: string,
+    val customerId: string,
+    val lines: array<SaftLine>,
+    val totals: SaftDocumentTotals,
+    // "0" until signed: the value the Portaria gives for documents with no signature.
+    var hash: string = "0",
+    var hashControl: string = "0",
+    val period: int = 0,
+    val selfBillingIndicator: int = 0,
+    val cashVatSchemeIndicator: int = 0,
+    val thirdPartiesBillingIndicator: int = 0,
+    val eacCode: string = "",
+    val transactionId: string = "",
+    val shipTo: SaftShippingPoint? = null,
+    val shipFrom: SaftShippingPoint? = null,
+    val movementEndTime: string = "",
+    val movementStartTime: string = "",
+    val withholding: array<SaftWithholding> = array<SaftWithholding>()
+)
+
+class SaftStockMovement(
+    val documentNumber: string,
+    var atcud: string,
+    val status: SaftDocumentStatus,
+    val movementDate: string,
+    val movementType: string,
+    val sourceId: string,
+    val systemEntryDate: string,
+    val movementStartTime: string,
+    val lines: array<SaftLine>,
+    val totals: SaftDocumentTotals,
+    // Exactly one of customerId and supplierId.
+    val customerId: string = "",
+    val supplierId: string = "",
+    var hash: string = "0",
+    var hashControl: string = "0",
+    val period: int = 0,
+    val transactionId: string = "",
+    val eacCode: string = "",
+    val movementComments: string = "",
+    val shipTo: SaftShippingPoint? = null,
+    val shipFrom: SaftShippingPoint? = null,
+    val movementEndTime: string = "",
+    val atDocCodeId: string = ""
+)
+
+class SaftWorkDocument(
+    val documentNumber: string,
+    var atcud: string,
+    val status: SaftDocumentStatus,
+    val workDate: string,
+    val workType: string,
+    val sourceId: string,
+    val systemEntryDate: string,
+    val customerId: string,
+    val lines: array<SaftLine>,
+    val totals: SaftDocumentTotals,
+    var hash: string = "0",
+    var hashControl: string = "0",
+    val period: int = 0,
+    val eacCode: string = "",
+    val transactionId: string = ""
+)
+
+class SaftSourceDocument(val originatingOn: string, val invoiceDate: string, val description: string = "")
+
+class SaftPaymentLine(
+    val lineNumber: int,
+    val sourceDocuments: array<SaftSourceDocument>,
+    val debitAmount: SaftDecimal? = null,
+    val creditAmount: SaftDecimal? = null,
+    val settlementAmount: SaftDecimal? = null,
+    val tax: SaftTax? = null,
+    val taxExemptionReason: string = "",
+    val taxExemptionCode: string = ""
+)
+
+// Receipts have no Hash in the XSD: Despacho 8632/2014, 1.1, excludes them from signing.
+class SaftPayment(
+    val paymentRefNo: string,
+    var atcud: string,
+    val transactionDate: string,
+    val paymentType: string,
+    val status: SaftDocumentStatus,
+    val sourceId: string,
+    val systemEntryDate: string,
+    val customerId: string,
+    val lines: array<SaftPaymentLine>,
+    val totals: SaftDocumentTotals,
+    val period: int = 0,
+    val transactionId: string = "",
+    val description: string = "",
+    val systemId: string = "",
+    val methods: array<SaftPaymentMethod> = array<SaftPaymentMethod>(),
+    val withholding: array<SaftWithholding> = array<SaftWithholding>()
+)
+
+class SaftSalesInvoices(
+    val numberOfEntries: int,
+    val totalDebit: SaftDecimal,
+    val totalCredit: SaftDecimal,
+    val invoices: array<SaftInvoice>
+)
+
+class SaftMovementOfGoods(
+    val numberOfMovementLines: int,
+    val totalQuantityIssued: SaftDecimal,
+    val movements: array<SaftStockMovement>
+)
+
+class SaftWorkingDocuments(
+    val numberOfEntries: int,
+    val totalDebit: SaftDecimal,
+    val totalCredit: SaftDecimal,
+    val documents: array<SaftWorkDocument>
+)
+
+class SaftPayments(
+    val numberOfEntries: int,
+    val totalDebit: SaftDecimal,
+    val totalCredit: SaftDecimal,
+    val payments: array<SaftPayment>
+)
+
+class SaftFile(
+    val header: SaftHeader,
+    val masterFiles: SaftMasterFiles,
+    val salesInvoices: SaftSalesInvoices? = null,
+    val movementOfGoods: SaftMovementOfGoods? = null,
+    val workingDocuments: SaftWorkingDocuments? = null,
+    val payments: SaftPayments? = null,
+    // Filled by the reader: tables in the file this model doesn't hold.
+    val skippedTables: array<string> = array<string>()
+)

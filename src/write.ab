@@ -1,0 +1,465 @@
+// Writes the file through abla-xml, in the order the XSD's sequences require.
+import github("AndreBaltazar8/abla-xml")
+import "decimal.ab"
+import "model.ab"
+import "check.ab"
+
+// The XSD and AT's demonstration file both declare Windows-1252, and the Portaria
+// doesn't name an encoding (SOURCES.md). Characters outside it become references.
+class SaftWriteOptions(
+    val encoding: string = "Windows-1252",
+    val indent: string = "  ",
+    // Skips the check. Only for tests that must produce an invalid file.
+    val unchecked: bool = false
+)
+
+class SaftWriteResult(
+    val succeeded: bool,
+    val text: string,
+    val issues: array<SaftIssue>,
+    val errorMessage: string
+)
+
+private fun opt(var w: XmlWriter, name: string, value: string): void {
+    if (value != "") w.element(name, value)
+    return
+}
+
+private fun optDec(var w: XmlWriter, name: string, value: SaftDecimal?): void {
+    if (value != null) w.element(name, value.text())
+    return
+}
+
+private fun optInt(var w: XmlWriter, name: string, value: int): void {
+    if (value != 0) w.element(name, "$value")
+    return
+}
+
+private fun address(var w: XmlWriter, name: string, a: SaftAddress): void {
+    w.startElement(name)
+    opt(w, "BuildingNumber", a.buildingNumber)
+    opt(w, "StreetName", a.streetName)
+    w.element("AddressDetail", a.addressDetail)
+    w.element("City", a.city)
+    w.element("PostalCode", a.postalCode)
+    opt(w, "Region", a.region)
+    w.element("Country", a.country)
+    w.endElement()
+    return
+}
+
+private fun header(var w: XmlWriter, h: SaftHeader): void {
+    w.startElement("Header")
+    w.element("AuditFileVersion", saftAuditFileVersion)
+    w.element("CompanyID", h.companyId)
+    w.element("TaxRegistrationNumber", h.taxRegistrationNumber)
+    w.element("TaxAccountingBasis", h.taxAccountingBasis)
+    w.element("CompanyName", h.companyName)
+    opt(w, "BusinessName", h.businessName)
+    address(w, "CompanyAddress", h.companyAddress)
+    w.element("FiscalYear", "${h.fiscalYear}")
+    w.element("StartDate", h.startDate)
+    w.element("EndDate", h.endDate)
+    w.element("CurrencyCode", h.currencyCode)
+    w.element("DateCreated", h.dateCreated)
+    w.element("TaxEntity", h.taxEntity)
+    w.element("ProductCompanyTaxID", h.productCompanyTaxId)
+    w.element("SoftwareCertificateNumber", "${h.softwareCertificateNumber}")
+    w.element("ProductID", h.productId)
+    w.element("ProductVersion", h.productVersion)
+    opt(w, "HeaderComment", h.headerComment)
+    opt(w, "Telephone", h.telephone)
+    opt(w, "Fax", h.fax)
+    opt(w, "Email", h.email)
+    opt(w, "Website", h.website)
+    w.endElement()
+    return
+}
+
+private fun masterFiles(var w: XmlWriter, m: SaftMasterFiles): void {
+    w.startElement("MasterFiles")
+    for (c in m.customers) {
+        w.startElement("Customer")
+        w.element("CustomerID", c.customerId)
+        w.element("AccountID", c.accountId)
+        w.element("CustomerTaxID", c.customerTaxId)
+        w.element("CompanyName", c.companyName)
+        opt(w, "Contact", c.contact)
+        address(w, "BillingAddress", c.billingAddress)
+        for (a in c.shipToAddresses) address(w, "ShipToAddress", a)
+        opt(w, "Telephone", c.telephone)
+        opt(w, "Fax", c.fax)
+        opt(w, "Email", c.email)
+        opt(w, "Website", c.website)
+        w.element("SelfBillingIndicator", "${c.selfBillingIndicator}")
+        w.endElement()
+    }
+    for (s in m.suppliers) {
+        w.startElement("Supplier")
+        w.element("SupplierID", s.supplierId)
+        w.element("AccountID", s.accountId)
+        w.element("SupplierTaxID", s.supplierTaxId)
+        w.element("CompanyName", s.companyName)
+        opt(w, "Contact", s.contact)
+        address(w, "BillingAddress", s.billingAddress)
+        for (a in s.shipFromAddresses) address(w, "ShipFromAddress", a)
+        opt(w, "Telephone", s.telephone)
+        opt(w, "Fax", s.fax)
+        opt(w, "Email", s.email)
+        opt(w, "Website", s.website)
+        w.element("SelfBillingIndicator", "${s.selfBillingIndicator}")
+        w.endElement()
+    }
+    for (p in m.products) {
+        w.startElement("Product")
+        w.element("ProductType", p.productType)
+        w.element("ProductCode", p.productCode)
+        opt(w, "ProductGroup", p.productGroup)
+        w.element("ProductDescription", p.productDescription)
+        w.element("ProductNumberCode", p.productNumberCode)
+        if (p.cnCodes.size > 0 || p.unNumbers.size > 0) {
+            w.startElement("CustomsDetails")
+            for (code in p.cnCodes) w.element("CNCode", code)
+            for (code in p.unNumbers) w.element("UNNumber", code)
+            w.endElement()
+        }
+        w.endElement()
+    }
+    if (m.taxTable.size > 0) {
+        w.startElement("TaxTable")
+        for (t in m.taxTable) {
+            w.startElement("TaxTableEntry")
+            w.element("TaxType", t.taxType)
+            w.element("TaxCountryRegion", t.taxCountryRegion)
+            w.element("TaxCode", t.taxCode)
+            w.element("Description", t.description)
+            opt(w, "TaxExpirationDate", t.taxExpirationDate)
+            optDec(w, "TaxPercentage", t.percentage)
+            optDec(w, "TaxAmount", t.amount)
+            w.endElement()
+        }
+        w.endElement()
+    }
+    w.endElement()
+    return
+}
+
+private fun status(var w: XmlWriter, prefix: string, sourceName: string, s: SaftDocumentStatus): void {
+    w.startElement("DocumentStatus")
+    w.element(prefix + "Status", s.status)
+    w.element(prefix + "StatusDate", s.statusDate)
+    opt(w, "Reason", s.reason)
+    w.element("SourceID", s.sourceId)
+    w.element(sourceName, s.sourceBilling)
+    w.endElement()
+    return
+}
+
+private fun shipping(var w: XmlWriter, name: string, point: SaftShippingPoint?): void {
+    if (point == null) return
+    w.startElement(name)
+    for (id in point.deliveryIds) w.element("DeliveryID", id)
+    opt(w, "DeliveryDate", point.deliveryDate)
+    for (place in point.warehouses) {
+        opt(w, "WarehouseID", place.warehouseId)
+        opt(w, "LocationID", place.locationId)
+    }
+    val a = point.address
+    if (a != null) address(w, "Address", a)
+    w.endElement()
+    return
+}
+
+private fun taxElement(var w: XmlWriter, tax: SaftTax?): void {
+    if (tax == null) return
+    w.startElement("Tax")
+    w.element("TaxType", tax.taxType)
+    w.element("TaxCountryRegion", tax.taxCountryRegion)
+    w.element("TaxCode", tax.taxCode)
+    optDec(w, "TaxPercentage", tax.percentage)
+    optDec(w, "TaxAmount", tax.amount)
+    w.endElement()
+    return
+}
+
+// `movement` leaves out the three fields a stock movement line doesn't have.
+private fun line(var w: XmlWriter, l: SaftLine, movement: bool): void {
+    w.startElement("Line")
+    w.element("LineNumber", "${l.lineNumber}")
+    for (o in l.orderReferences) {
+        w.startElement("OrderReferences")
+        opt(w, "OriginatingON", o.originatingOn)
+        opt(w, "OrderDate", o.orderDate)
+        w.endElement()
+    }
+    w.element("ProductCode", l.productCode)
+    w.element("ProductDescription", l.productDescription)
+    w.element("Quantity", l.quantity.text())
+    w.element("UnitOfMeasure", l.unitOfMeasure)
+    w.element("UnitPrice", l.unitPrice.text())
+    if (!movement) {
+        optDec(w, "TaxBase", l.taxBase)
+        w.element("TaxPointDate", l.taxPointDate)
+        for (r in l.references) {
+            w.startElement("References")
+            opt(w, "Reference", r.reference)
+            opt(w, "Reason", r.reason)
+            w.endElement()
+        }
+    }
+    w.element("Description", l.description)
+    if (l.serialNumbers.size > 0) {
+        w.startElement("ProductSerialNumber")
+        for (n in l.serialNumbers) w.element("SerialNumber", n)
+        w.endElement()
+    }
+    optDec(w, "DebitAmount", l.debitAmount)
+    optDec(w, "CreditAmount", l.creditAmount)
+    taxElement(w, l.tax)
+    opt(w, "TaxExemptionReason", l.taxExemptionReason)
+    opt(w, "TaxExemptionCode", l.taxExemptionCode)
+    optDec(w, "SettlementAmount", l.settlementAmount)
+    if (l.arcNumbers.size > 0 || l.iecAmount != null) {
+        w.startElement("CustomsInformation")
+        for (n in l.arcNumbers) w.element("ARCNo", n)
+        optDec(w, "IECAmount", l.iecAmount)
+        w.endElement()
+    }
+    w.endElement()
+    return
+}
+
+private fun currency(var w: XmlWriter, c: SaftCurrency?): void {
+    if (c == null) return
+    w.startElement("Currency")
+    w.element("CurrencyCode", c.currencyCode)
+    w.element("CurrencyAmount", c.currencyAmount.text())
+    w.element("ExchangeRate", c.exchangeRate.text())
+    w.endElement()
+    return
+}
+
+private fun paymentMethod(var w: XmlWriter, name: string, p: SaftPaymentMethod): void {
+    w.startElement(name)
+    opt(w, "PaymentMechanism", p.paymentMechanism)
+    w.element("PaymentAmount", p.paymentAmount.text())
+    w.element("PaymentDate", p.paymentDate)
+    w.endElement()
+    return
+}
+
+private fun totalsStart(var w: XmlWriter, t: SaftDocumentTotals): void {
+    w.startElement("DocumentTotals")
+    w.element("TaxPayable", t.taxPayable.text())
+    w.element("NetTotal", t.netTotal.text())
+    w.element("GrossTotal", t.grossTotal.text())
+    return
+}
+
+private fun withholding(var w: XmlWriter, items: array<SaftWithholding>): void {
+    for (item in items) {
+        w.startElement("WithholdingTax")
+        opt(w, "WithholdingTaxType", item.withholdingTaxType)
+        opt(w, "WithholdingTaxDescription", item.description)
+        w.element("WithholdingTaxAmount", item.amount.text())
+        w.endElement()
+    }
+    return
+}
+
+private fun invoices(var w: XmlWriter, section: SaftSalesInvoices?): void {
+    if (section == null) return
+    w.startElement("SalesInvoices")
+    w.element("NumberOfEntries", "${section.numberOfEntries}")
+    w.element("TotalDebit", section.totalDebit.text())
+    w.element("TotalCredit", section.totalCredit.text())
+    for (d in section.invoices) {
+        w.startElement("Invoice")
+        w.element("InvoiceNo", d.invoiceNo)
+        w.element("ATCUD", d.atcud)
+        status(w, "Invoice", "SourceBilling", d.status)
+        w.element("Hash", d.hash)
+        w.element("HashControl", d.hashControl)
+        optInt(w, "Period", d.period)
+        w.element("InvoiceDate", d.invoiceDate)
+        w.element("InvoiceType", d.invoiceType)
+        w.startElement("SpecialRegimes")
+        w.element("SelfBillingIndicator", "${d.selfBillingIndicator}")
+        w.element("CashVATSchemeIndicator", "${d.cashVatSchemeIndicator}")
+        w.element("ThirdPartiesBillingIndicator", "${d.thirdPartiesBillingIndicator}")
+        w.endElement()
+        w.element("SourceID", d.sourceId)
+        opt(w, "EACCode", d.eacCode)
+        w.element("SystemEntryDate", d.systemEntryDate)
+        opt(w, "TransactionID", d.transactionId)
+        w.element("CustomerID", d.customerId)
+        shipping(w, "ShipTo", d.shipTo)
+        shipping(w, "ShipFrom", d.shipFrom)
+        opt(w, "MovementEndTime", d.movementEndTime)
+        opt(w, "MovementStartTime", d.movementStartTime)
+        for (l in d.lines) line(w, l, false)
+        totalsStart(w, d.totals)
+        currency(w, d.totals.currency)
+        for (s in d.totals.settlements) {
+            w.startElement("Settlement")
+            opt(w, "SettlementDiscount", s.settlementDiscount)
+            optDec(w, "SettlementAmount", s.settlementAmount)
+            opt(w, "SettlementDate", s.settlementDate)
+            opt(w, "PaymentTerms", s.paymentTerms)
+            w.endElement()
+        }
+        for (p in d.totals.payments) paymentMethod(w, "Payment", p)
+        w.endElement()
+        withholding(w, d.withholding)
+        w.endElement()
+    }
+    w.endElement()
+    return
+}
+
+private fun movements(var w: XmlWriter, section: SaftMovementOfGoods?): void {
+    if (section == null) return
+    w.startElement("MovementOfGoods")
+    w.element("NumberOfMovementLines", "${section.numberOfMovementLines}")
+    w.element("TotalQuantityIssued", section.totalQuantityIssued.text())
+    for (d in section.movements) {
+        w.startElement("StockMovement")
+        w.element("DocumentNumber", d.documentNumber)
+        w.element("ATCUD", d.atcud)
+        status(w, "Movement", "SourceBilling", d.status)
+        w.element("Hash", d.hash)
+        w.element("HashControl", d.hashControl)
+        optInt(w, "Period", d.period)
+        w.element("MovementDate", d.movementDate)
+        w.element("MovementType", d.movementType)
+        w.element("SystemEntryDate", d.systemEntryDate)
+        opt(w, "TransactionID", d.transactionId)
+        opt(w, "CustomerID", d.customerId)
+        opt(w, "SupplierID", d.supplierId)
+        w.element("SourceID", d.sourceId)
+        opt(w, "EACCode", d.eacCode)
+        opt(w, "MovementComments", d.movementComments)
+        shipping(w, "ShipTo", d.shipTo)
+        shipping(w, "ShipFrom", d.shipFrom)
+        opt(w, "MovementEndTime", d.movementEndTime)
+        w.element("MovementStartTime", d.movementStartTime)
+        opt(w, "ATDocCodeID", d.atDocCodeId)
+        for (l in d.lines) line(w, l, true)
+        totalsStart(w, d.totals)
+        currency(w, d.totals.currency)
+        w.endElement()
+        w.endElement()
+    }
+    w.endElement()
+    return
+}
+
+private fun workDocuments(var w: XmlWriter, section: SaftWorkingDocuments?): void {
+    if (section == null) return
+    w.startElement("WorkingDocuments")
+    w.element("NumberOfEntries", "${section.numberOfEntries}")
+    w.element("TotalDebit", section.totalDebit.text())
+    w.element("TotalCredit", section.totalCredit.text())
+    for (d in section.documents) {
+        w.startElement("WorkDocument")
+        w.element("DocumentNumber", d.documentNumber)
+        w.element("ATCUD", d.atcud)
+        status(w, "Work", "SourceBilling", d.status)
+        w.element("Hash", d.hash)
+        w.element("HashControl", d.hashControl)
+        optInt(w, "Period", d.period)
+        w.element("WorkDate", d.workDate)
+        w.element("WorkType", d.workType)
+        w.element("SourceID", d.sourceId)
+        opt(w, "EACCode", d.eacCode)
+        w.element("SystemEntryDate", d.systemEntryDate)
+        opt(w, "TransactionID", d.transactionId)
+        w.element("CustomerID", d.customerId)
+        for (l in d.lines) line(w, l, false)
+        totalsStart(w, d.totals)
+        currency(w, d.totals.currency)
+        w.endElement()
+        w.endElement()
+    }
+    w.endElement()
+    return
+}
+
+private fun receipts(var w: XmlWriter, section: SaftPayments?): void {
+    if (section == null) return
+    w.startElement("Payments")
+    w.element("NumberOfEntries", "${section.numberOfEntries}")
+    w.element("TotalDebit", section.totalDebit.text())
+    w.element("TotalCredit", section.totalCredit.text())
+    for (d in section.payments) {
+        w.startElement("Payment")
+        w.element("PaymentRefNo", d.paymentRefNo)
+        w.element("ATCUD", d.atcud)
+        optInt(w, "Period", d.period)
+        opt(w, "TransactionID", d.transactionId)
+        w.element("TransactionDate", d.transactionDate)
+        w.element("PaymentType", d.paymentType)
+        opt(w, "Description", d.description)
+        opt(w, "SystemID", d.systemId)
+        status(w, "Payment", "SourcePayment", d.status)
+        for (p in d.methods) paymentMethod(w, "PaymentMethod", p)
+        w.element("SourceID", d.sourceId)
+        w.element("SystemEntryDate", d.systemEntryDate)
+        w.element("CustomerID", d.customerId)
+        for (l in d.lines) {
+            w.startElement("Line")
+            w.element("LineNumber", "${l.lineNumber}")
+            for (s in l.sourceDocuments) {
+                w.startElement("SourceDocumentID")
+                w.element("OriginatingON", s.originatingOn)
+                w.element("InvoiceDate", s.invoiceDate)
+                opt(w, "Description", s.description)
+                w.endElement()
+            }
+            optDec(w, "SettlementAmount", l.settlementAmount)
+            optDec(w, "DebitAmount", l.debitAmount)
+            optDec(w, "CreditAmount", l.creditAmount)
+            taxElement(w, l.tax)
+            opt(w, "TaxExemptionReason", l.taxExemptionReason)
+            opt(w, "TaxExemptionCode", l.taxExemptionCode)
+            w.endElement()
+        }
+        totalsStart(w, d.totals)
+        val settled = d.totals.settlementAmount
+        if (settled != null) {
+            w.startElement("Settlement")
+            w.element("SettlementAmount", settled.text())
+            w.endElement()
+        }
+        currency(w, d.totals.currency)
+        w.endElement()
+        withholding(w, d.withholding)
+        w.endElement()
+    }
+    w.endElement()
+    return
+}
+
+// The file's bytes, or the issues that stopped it: any issue of severity error from
+// saftCheck refuses to write. Warnings come back with a successful result.
+fun saftWrite(file: SaftFile, options: SaftWriteOptions = SaftWriteOptions()): SaftWriteResult {
+    val issues = if (options.unchecked) array<SaftIssue>() else saftCheck(file)
+    if (saftHasErrors(issues)) return SaftWriteResult(false, "", issues, "the file has errors: see issues")
+    val w = xmlWriter(XmlWriterOptions(encoding = options.encoding, indent = options.indent))
+    w.declaration()
+    w.startElement("AuditFile")
+    w.namespace("", saftNamespace)
+    header(w, file.header)
+    masterFiles(w, file.masterFiles)
+    if (file.salesInvoices != null || file.movementOfGoods != null || file.workingDocuments != null || file.payments != null) {
+        w.startElement("SourceDocuments")
+        invoices(w, file.salesInvoices)
+        movements(w, file.movementOfGoods)
+        workDocuments(w, file.workingDocuments)
+        receipts(w, file.payments)
+        w.endElement()
+    }
+    w.endElement()
+    val result = w.finish()
+    SaftWriteResult(result.succeeded, result.text, issues, result.errorMessage)
+}

@@ -1,0 +1,729 @@
+// Checks a file before writing, and after reading. Severity error is what the XSD
+// rejects (field limits, enumerations, patterns, keys, assertions), or a control total
+// that doesn't add up, which the file's Portaria forbids though no XSD can see it.
+// Severity warning is what the Portaria asks and the XSD can't enforce. SOURCES.md says
+// where each comes from. Passing this isn't conformity with AT: it is a program's check.
+import "abla/text"
+import "codes.ab"
+import "decimal.ab"
+import "model.ab"
+import "totals.ab"
+
+val saftSeverityError = "error"
+val saftSeverityWarning = "warning"
+
+class SaftIssue(val severity: string, val code: string, val path: string, val message: string)
+
+fun saftHasErrors(issues: array<SaftIssue>): bool {
+    for (issue in issues) if (issue.severity == saftSeverityError) return true
+    false
+}
+
+private fun isDigits(value: string): bool {
+    if (value == "") return false
+    for (c in value) if (c < 48 || c > 57) return false
+    true
+}
+
+private fun isLeapYear(year: int): bool = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+
+private fun number(value: string): int {
+    var out = 0
+    for (c in value) out = out * 10 + (c - 48)
+    out
+}
+
+// "YYYY-MM-DD" with a real calendar date.
+fun saftValidDate(value: string): bool {
+    if (value.size != 10 || value[4] != 45 || value[7] != 45) return false
+    val y = value.slice(0, 4)
+    val m = value.slice(5, 7)
+    val d = value.slice(8, 10)
+    if (!isDigits(y) || !isDigits(m) || !isDigits(d)) return false
+    val month = number(m)
+    val day = number(d)
+    if (month < 1 || month > 12 || day < 1) return false
+    val days = [31, if (isLeapYear(number(y))) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    day <= days[month - 1]
+}
+
+// "YYYY-MM-DDThh:mm:ss": no zone and no fractions (Annex I, 1 j)).
+fun saftValidTimestamp(value: string): bool {
+    if (value.size != 19 || value[10] != 84 || value[13] != 58 || value[16] != 58) return false
+    if (!saftValidDate(value.slice(0, 10))) return false
+    val h = value.slice(11, 13)
+    val m = value.slice(14, 16)
+    val s = value.slice(17, 19)
+    if (!isDigits(h) || !isDigits(m) || !isDigits(s)) return false
+    number(h) <= 23 && number(m) <= 59 && number(s) <= 59
+}
+
+// The XSD's [^ ]+ [^/^ ]+/[0-9]+ for InvoiceNo, DocumentNumber and PaymentRefNo.
+fun saftValidDocumentNumber(value: string): bool {
+    val space = value.indexOf(" ")
+    if (space <= 0) return false
+    val rest = value.slice(space + 1, value.size)
+    val slash = rest.indexOf("/")
+    if (slash <= 0) return false
+    val series = rest.slice(0, slash)
+    if (series.contains(" ") || series.contains("^")) return false
+    isDigits(rest.slice(slash + 1, rest.size))
+}
+
+private fun noCaret(value: string): bool = !value.contains("^")
+
+private fun allAlnumDot(value: string): bool {
+    for (c in value)
+        if (!((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 46)) return false
+    true
+}
+
+private fun isOneOf(value: string, options: string): bool {
+    for (option in options.split(" ")) if (option == value) return true
+    false
+}
+
+private fun validCompanyId(value: string): bool {
+    if (isDigits(value) && value.size % 9 == 0) return true
+    val space = value.lastIndexOf(" ")
+    if (space <= 0 || !noCaret(value.slice(0, space))) return false
+    val tail = value.slice(space + 1, value.size)
+    if (tail == "") return false
+    for (c in tail) if (!((c >= 48 && c <= 57) || c == 47)) return false
+    true
+}
+
+private fun validHashControl(value: string): bool {
+    if (isDigits(value)) return true
+    val dot = value.indexOf(".")
+    if (dot > 0 && isDigits(value.slice(0, dot)) && isDigits(value.slice(dot + 1, value.size))) return true
+    // Manual and duplicate recoveries: 1-FTM abc/00001, 1-FTD XY 2013A/00099 (Despacho 2.4.5, 2.5.5).
+    val dash = value.indexOf("-")
+    if (dash <= 0 || !isDigits(value.slice(0, dash)) || value.size < dash + 5) return false
+    val a = value[dash + 1]
+    val b = value[dash + 2]
+    if (a < 65 || a > 90 || b < 65 || b > 90 || value[dash + 4] != 32) return false
+    val kind = value[dash + 3]
+    val rest = value.slice(dash + 5, value.size)
+    if (kind == 77) {
+        val slash = rest.indexOf("/")
+        return slash > 0 && !rest.slice(0, slash).contains(" ") && !rest.slice(0, slash).contains("^") && isDigits(rest.slice(slash + 1, rest.size))
+    }
+    kind == 68 && saftValidDocumentNumber(rest)
+}
+
+private fun validExemptionCode(value: string): bool {
+    if (value == "" || value.size % 3 != 0) return false
+    var i = 0
+    while (i < value.size) {
+        if (value[i] != 77 || !isDigits(value.slice(i + 1, i + 3))) return false
+        i = i + 3
+    }
+    true
+}
+
+private fun validTransactionId(value: string): bool {
+    if (value.size < 14) return false
+    if (!isDigits(value.slice(0, 4)) || value[0] == 48 || value[4] != 45 || value[7] != 45) return false
+    if (!isDigits(value.slice(5, 7)) || !isDigits(value.slice(8, 10)) || value[10] != 32) return false
+    if (value[5] > 49 || value[8] > 51) return false
+    val rest = value.slice(11, value.size).split(" ")
+    rest.size == 2 && rest[0] != "" && rest[1] != "" && rest[0].codePointCount() <= 30 && rest[1].codePointCount() <= 20
+}
+
+private class Checker(val issues: array<SaftIssue>) {
+    fun error(code: string, path: string, message: string): void {
+        issues.append(SaftIssue(saftSeverityError, code, path, message))
+        return
+    }
+
+    fun warning(code: string, path: string, message: string): void {
+        issues.append(SaftIssue(saftSeverityWarning, code, path, message))
+        return
+    }
+
+    // Lengths count characters, not bytes (Annex I, 1 k)).
+    fun text(path: string, value: string, low: int, high: int): void {
+        val size = value.codePointCount()
+        if (size < low) error("too_short", path, "needs at least $low characters")
+        else if (size > high) error("too_long", path, "$size characters, the limit is $high")
+        return
+    }
+
+    fun optText(path: string, value: string, high: int): void {
+        if (value != "") text(path, value, 1, high)
+        return
+    }
+
+    fun oneOf(path: string, value: string, options: string): void {
+        if (!isOneOf(value, options)) error("not_allowed", path, "\"$value\" isn't one of: $options")
+        return
+    }
+
+    fun pattern(path: string, ok: bool, what: string): void {
+        if (!ok) error("bad_pattern", path, what)
+        return
+    }
+
+    fun date(path: string, value: string): void {
+        if (!saftValidDate(value)) error("bad_date", path, "\"$value\" isn't YYYY-MM-DD")
+        return
+    }
+
+    fun optDate(path: string, value: string): void {
+        if (value != "") date(path, value)
+        return
+    }
+
+    fun timestamp(path: string, value: string): void {
+        if (!saftValidTimestamp(value)) error("bad_timestamp", path, "\"$value\" isn't YYYY-MM-DDThh:mm:ss")
+        return
+    }
+
+    fun optTimestamp(path: string, value: string): void {
+        if (value != "") timestamp(path, value)
+        return
+    }
+
+    // Every amount in the file is zero or more (the XSD's minInclusive, and Annex I, 1 l)).
+    fun amount(path: string, value: SaftDecimal): void {
+        if (value.isNegative()) error("negative", path, "${value.text()} is negative")
+        return
+    }
+
+    fun optAmount(path: string, value: SaftDecimal?): void {
+        if (value != null) amount(path, value)
+        return
+    }
+
+    fun indicator(path: string, value: int): void {
+        if (value != 0 && value != 1) error("not_allowed", path, "must be 0 or 1")
+        return
+    }
+
+    fun period(path: string, value: int): void {
+        if (value != 0 && (value < 1 || value > 12)) error("not_allowed", path, "must be from 1 to 12")
+        return
+    }
+
+    fun address(path: string, a: SaftAddress, customer: bool): void {
+        optText(path + ".BuildingNumber", a.buildingNumber, 10)
+        optText(path + ".StreetName", a.streetName, 200)
+        text(path + ".AddressDetail", a.addressDetail, 1, 210)
+        text(path + ".City", a.city, 1, 50)
+        text(path + ".PostalCode", a.postalCode, 1, 20)
+        optText(path + ".Region", a.region, 50)
+        val codes = if (customer) saftCustomerCountryCodes else saftCountryCodes
+        if (!saftCodeIn(codes, a.country)) error("not_allowed", path + ".Country", "\"${a.country}\" isn't a country code")
+        return
+    }
+
+    fun header(h: SaftHeader): void {
+        val p = "Header"
+        text(p + ".CompanyID", h.companyId, 1, 50)
+        pattern(p + ".CompanyID", validCompanyId(h.companyId), "is neither a NIF nor conservatory and number")
+        pattern(p + ".TaxRegistrationNumber", isDigits(h.taxRegistrationNumber) && h.taxRegistrationNumber.size == 9 && h.taxRegistrationNumber[0] != 48, "must be 9 digits, not starting with 0")
+        oneOf(p + ".TaxAccountingBasis", h.taxAccountingBasis, "C E F I P R S T")
+        text(p + ".CompanyName", h.companyName, 1, 100)
+        optText(p + ".BusinessName", h.businessName, 60)
+        address(p + ".CompanyAddress", h.companyAddress, false)
+        if (h.companyAddress.country != "PT") warning("portaria", p + ".CompanyAddress.Country", "1.7.7 says to fill in PT")
+        if (h.fiscalYear < 2000 || h.fiscalYear > 9999) error("not_allowed", p + ".FiscalYear", "must be from 2000 to 9999")
+        date(p + ".StartDate", h.startDate)
+        date(p + ".EndDate", h.endDate)
+        if (h.currencyCode != "EUR") error("not_allowed", p + ".CurrencyCode", "must be EUR")
+        date(p + ".DateCreated", h.dateCreated)
+        text(p + ".TaxEntity", h.taxEntity, 1, 20)
+        text(p + ".ProductCompanyTaxID", h.productCompanyTaxId, 1, 30)
+        if (h.softwareCertificateNumber < 0) error("negative", p + ".SoftwareCertificateNumber", "is negative")
+        text(p + ".ProductID", h.productId, 3, 255)
+        val parts = h.productId.split("/")
+        pattern(p + ".ProductID", parts.size == 2 && parts[0] != "" && parts[1] != "", "must be application/producer")
+        text(p + ".ProductVersion", h.productVersion, 1, 30)
+        optText(p + ".HeaderComment", h.headerComment, 255)
+        optText(p + ".Telephone", h.telephone, 20)
+        optText(p + ".Fax", h.fax, 20)
+        optText(p + ".Email", h.email, 254)
+        optText(p + ".Website", h.website, 60)
+        return
+    }
+
+    fun contacts(p: string, contact: string, telephone: string, fax: string, email: string, website: string): void {
+        optText(p + ".Contact", contact, 50)
+        optText(p + ".Telephone", telephone, 20)
+        optText(p + ".Fax", fax, 20)
+        optText(p + ".Email", email, 254)
+        optText(p + ".Website", website, 60)
+        return
+    }
+
+    fun account(p: string, value: string): void {
+        text(p + ".AccountID", value, 1, 30)
+        pattern(p + ".AccountID", noCaret(value), "can't contain ^")
+        return
+    }
+
+    fun taxTableCode(path: string, value: string): void {
+        text(path, value, 1, 10)
+        pattern(path, allAlnumDot(value), "only letters, digits and dots")
+        return
+    }
+
+    fun masterFiles(m: SaftMasterFiles): void {
+        val seen = TextSet()
+        for (c in m.customers) {
+            val p = "Customer[${c.customerId}]"
+            text(p + ".CustomerID", c.customerId, 1, 30)
+            if (!seen.add(c.customerId)) error("duplicate", p, "CustomerID appears twice")
+            account(p, c.accountId)
+            text(p + ".CustomerTaxID", c.customerTaxId, 1, 30)
+            text(p + ".CompanyName", c.companyName, 1, 100)
+            contacts(p, c.contact, c.telephone, c.fax, c.email, c.website)
+            address(p + ".BillingAddress", c.billingAddress, true)
+            for (a in c.shipToAddresses) address(p + ".ShipToAddress", a, true)
+            indicator(p + ".SelfBillingIndicator", c.selfBillingIndicator)
+            if (c.customerTaxId == saftFinalConsumerTaxId && c.companyName != "Consumidor final")
+                warning("portaria", p + ".CompanyName", "2.2.4 names the generic customer \"Consumidor final\"")
+        }
+        val suppliers = TextSet()
+        for (s in m.suppliers) {
+            val p = "Supplier[${s.supplierId}]"
+            text(p + ".SupplierID", s.supplierId, 1, 30)
+            if (!suppliers.add(s.supplierId)) error("duplicate", p, "SupplierID appears twice")
+            account(p, s.accountId)
+            text(p + ".SupplierTaxID", s.supplierTaxId, 1, 30)
+            text(p + ".CompanyName", s.companyName, 1, 100)
+            contacts(p, s.contact, s.telephone, s.fax, s.email, s.website)
+            address(p + ".BillingAddress", s.billingAddress, false)
+            for (a in s.shipFromAddresses) address(p + ".ShipFromAddress", a, false)
+            indicator(p + ".SelfBillingIndicator", s.selfBillingIndicator)
+        }
+        val products = TextSet()
+        for (q in m.products) {
+            val p = "Product[${q.productCode}]"
+            oneOf(p + ".ProductType", q.productType, "P S O E I")
+            text(p + ".ProductCode", q.productCode, 1, 60)
+            if (!products.add(q.productCode)) error("duplicate", p, "ProductCode appears twice")
+            optText(p + ".ProductGroup", q.productGroup, 50)
+            text(p + ".ProductDescription", q.productDescription, 2, 200)
+            text(p + ".ProductNumberCode", q.productNumberCode, 1, 60)
+            for (code in q.cnCodes) pattern(p + ".CNCode", isDigits(code) && code.size == 8, "must be 8 digits")
+            for (code in q.unNumbers) pattern(p + ".UNNumber", isDigits(code) && code.size == 4, "must be 4 digits")
+        }
+        for (t in m.taxTable) {
+            val p = "TaxTableEntry[${t.taxCountryRegion} ${t.taxCode}]"
+            oneOf(p + ".TaxType", t.taxType, "IVA IS NS")
+            region(p + ".TaxCountryRegion", t.taxCountryRegion)
+            taxTableCode(p + ".TaxCode", t.taxCode)
+            text(p + ".Description", t.description, 1, 255)
+            optDate(p + ".TaxExpirationDate", t.taxExpirationDate)
+            choice(p, t.percentage, t.amount)
+        }
+        return
+    }
+
+    fun region(path: string, value: string): void {
+        if (!saftCodeIn(saftTaxRegionCodes, value)) error("not_allowed", path, "\"$value\" isn't a tax region")
+        return
+    }
+
+    fun choice(p: string, percentage: SaftDecimal?, amount: SaftDecimal?): void {
+        if ((percentage == null) == (amount == null)) error("choice", p, "needs exactly one of TaxPercentage and TaxAmount")
+        optAmount(p + ".TaxPercentage", percentage)
+        optAmount(p + ".TaxAmount", amount)
+        return
+    }
+
+    fun status(p: string, s: SaftDocumentStatus, statuses: string): void {
+        oneOf(p + ".Status", s.status, statuses)
+        timestamp(p + ".StatusDate", s.statusDate)
+        optText(p + ".Reason", s.reason, 50)
+        text(p + ".SourceID", s.sourceId, 1, 30)
+        oneOf(p + ".SourceBilling", s.sourceBilling, "P I M")
+        return
+    }
+
+    fun signature(p: string, hash: string, hashControl: string): void {
+        text(p + ".Hash", hash, 1, 172)
+        text(p + ".HashControl", hashControl, 1, 70)
+        pattern(p + ".HashControl", validHashControl(hashControl), "isn't a key version or a recovery reference")
+        return
+    }
+
+    fun documentNumber(p: string, name: string, value: string, var seen: TextSet): void {
+        text(p + "." + name, value, 1, 60)
+        pattern(p + "." + name, saftValidDocumentNumber(value), "must look like FT A/1")
+        if (!seen.add(value)) error("duplicate", p, name + " appears twice")
+        return
+    }
+
+    fun atcud(p: string, value: string, number: string): void {
+        text(p + ".ATCUD", value, 1, 100)
+        if (value == "0") {
+            warning("portaria", p + ".ATCUD", "0 stood only until the ATCUD was regulated (Portaria 195/2020)")
+            return
+        }
+        val slash = number.lastIndexOf("/")
+        val dash = value.lastIndexOf("-")
+        if (slash > 0 && (dash < 8 || value.slice(dash + 1, value.size) != number.slice(slash + 1, number.size)))
+            warning("atcud", p + ".ATCUD", "isn't a validation code of at least 8 characters, a hyphen and the document's sequence number")
+        return
+    }
+
+    fun shippingPoint(p: string, point: SaftShippingPoint?): void {
+        if (point == null) return
+        for (id in point.deliveryIds) text(p + ".DeliveryID", id, 1, 255)
+        optDate(p + ".DeliveryDate", point.deliveryDate)
+        for (place in point.warehouses) {
+            optText(p + ".WarehouseID", place.warehouseId, 50)
+            optText(p + ".LocationID", place.locationId, 30)
+        }
+        val a = point.address
+        if (a != null) address(p + ".Address", a, true)
+        return
+    }
+
+    fun eac(p: string, value: string): void {
+        if (value != "") pattern(p + ".EACCode", isDigits(value) && value.size == 5, "must be 5 digits")
+        return
+    }
+
+    fun transaction(p: string, value: string): void {
+        if (value != "") {
+            text(p + ".TransactionID", value, 1, 70)
+            pattern(p + ".TransactionID", validTransactionId(value), "must be date, journal and archive number")
+        }
+        return
+    }
+
+    // The exemption assertions of the XSD, shared by every line type: a zero rate takes
+    // a reason, a non-zero rate doesn't, and reason and code come together.
+    fun exemption(p: string, tax: SaftTax?, reason: string, code: string): void {
+        if (reason != "") text(p + ".TaxExemptionReason", reason, 6, 60)
+        if (code != "") pattern(p + ".TaxExemptionCode", validExemptionCode(code), "must look like M01")
+        if ((reason == "") != (code == "")) error("assert", p, "TaxExemptionReason and TaxExemptionCode come together")
+        if (tax == null) return
+        val rate = tax.percentage
+        if (rate != null) {
+            if (rate.isZero() && reason == "") error("assert", p, "a zero TaxPercentage needs a TaxExemptionReason")
+            if (!rate.isZero() && reason != "") error("assert", p, "a non-zero TaxPercentage can't have a TaxExemptionReason")
+        }
+        val amount = tax.amount
+        if (amount != null) {
+            if (amount.isZero() && reason == "") error("assert", p, "a zero TaxAmount needs a TaxExemptionReason")
+            if (!amount.isZero() && reason != "") error("assert", p, "a non-zero TaxAmount can't have a TaxExemptionReason")
+        }
+        return
+    }
+
+    fun tax(p: string, t: SaftTax?, kind: int): void {
+        if (t == null) return
+        val q = p + ".Tax"
+        region(q + ".TaxCountryRegion", t.taxCountryRegion)
+        if (kind == LINE_MOVEMENT) {
+            oneOf(q + ".TaxType", t.taxType, "IVA NS")
+            oneOf(q + ".TaxCode", t.taxCode, "RED INT NOR ISE OUT NS")
+            if (t.percentage == null || t.amount != null) error("choice", q, "a movement's Tax takes only TaxPercentage")
+            optAmount(q + ".TaxPercentage", t.percentage)
+        } else {
+            oneOf(q + ".TaxType", t.taxType, "IVA IS NS")
+            taxTableCode(q + ".TaxCode", t.taxCode)
+            choice(q, t.percentage, t.amount)
+        }
+        return
+    }
+
+    fun line(p: string, l: SaftLine, kind: int, var products: TextSet): void {
+        val q = "$p.Line[${l.lineNumber}]"
+        if (l.lineNumber < 0) error("negative", q, "LineNumber is negative")
+        for (o in l.orderReferences) {
+            optText(q + ".OriginatingON", o.originatingOn, 60)
+            optDate(q + ".OrderDate", o.orderDate)
+        }
+        text(q + ".ProductCode", l.productCode, 1, 60)
+        if (!products.has(l.productCode)) error("unknown_product", q + ".ProductCode", "\"${l.productCode}\" isn't in the Product table")
+        text(q + ".ProductDescription", l.productDescription, 2, 200)
+        amount(q + ".Quantity", l.quantity)
+        text(q + ".UnitOfMeasure", l.unitOfMeasure, 1, 20)
+        amount(q + ".UnitPrice", l.unitPrice)
+        if (kind == LINE_MOVEMENT) {
+            if (l.taxBase != null || l.taxPointDate != "" || l.references.size > 0)
+                error("not_allowed", q, "a movement line has no TaxBase, TaxPointDate or References")
+        } else {
+            date(q + ".TaxPointDate", l.taxPointDate)
+            for (r in l.references) {
+                optText(q + ".Reference", r.reference, 60)
+                optText(q + ".Reason", r.reason, 50)
+            }
+            val base = l.taxBase
+            if (base != null) {
+                amount(q + ".TaxBase", base)
+                if (!l.unitPrice.isZero()) error("assert", q, "TaxBase needs a UnitPrice of zero")
+                val d = l.debitAmount
+                val c = l.creditAmount
+                if ((d != null && !d.isZero()) || (c != null && !c.isZero())) error("assert", q, "TaxBase needs a zero line amount")
+            }
+        }
+        text(q + ".Description", l.description, 1, 200)
+        for (n in l.serialNumbers) text(q + ".SerialNumber", n, 1, 100)
+        if ((l.debitAmount == null) == (l.creditAmount == null)) error("choice", q, "needs exactly one of DebitAmount and CreditAmount")
+        optAmount(q + ".DebitAmount", l.debitAmount)
+        optAmount(q + ".CreditAmount", l.creditAmount)
+        if (kind == LINE_INVOICE && l.tax == null) error("required", q + ".Tax", "an invoice line needs Tax")
+        tax(q, l.tax, kind)
+        exemption(q, l.tax, l.taxExemptionReason, l.taxExemptionCode)
+        optAmount(q + ".SettlementAmount", l.settlementAmount)
+        for (n in l.arcNumbers) text(q + ".ARCNo", n, 1, 21)
+        optAmount(q + ".IECAmount", l.iecAmount)
+        return
+    }
+
+    fun totals(p: string, t: SaftDocumentTotals): void {
+        amount(p + ".TaxPayable", t.taxPayable)
+        amount(p + ".NetTotal", t.netTotal)
+        amount(p + ".GrossTotal", t.grossTotal)
+        val c = t.currency
+        if (c != null) {
+            if (!saftCodeIn(saftCurrencyCodes, c.currencyCode)) error("not_allowed", p + ".CurrencyCode", "\"${c.currencyCode}\" isn't a currency code")
+            amount(p + ".CurrencyAmount", c.currencyAmount)
+            amount(p + ".ExchangeRate", c.exchangeRate)
+            if (c.currencyCode == "EUR") warning("portaria", p + ".Currency", "this structure isn't generated for documents in euros")
+        }
+        for (s in t.settlements) {
+            optText(p + ".SettlementDiscount", s.settlementDiscount, 30)
+            optAmount(p + ".SettlementAmount", s.settlementAmount)
+            optDate(p + ".SettlementDate", s.settlementDate)
+            optText(p + ".PaymentTerms", s.paymentTerms, 100)
+        }
+        for (m in t.payments) method(p + ".Payment", m)
+        optAmount(p + ".SettlementAmount", t.settlementAmount)
+        // The Portaria defines NetTotal and GrossTotal without giving this sum, and
+        // rounding varies by program, hence only a warning, with a cent per line of slack.
+        if (!t.netTotal.plus(t.taxPayable).rounded(2).equalTo(t.grossTotal.rounded(2)))
+            warning("totals", p + ".GrossTotal", "isn't NetTotal plus TaxPayable")
+        return
+    }
+
+    fun method(p: string, m: SaftPaymentMethod): void {
+        if (m.paymentMechanism != "") oneOf(p + ".PaymentMechanism", m.paymentMechanism, "CC CD CH CI CO CS DE LC MB NU OU PR TB TR")
+        amount(p + ".PaymentAmount", m.paymentAmount)
+        date(p + ".PaymentDate", m.paymentDate)
+        return
+    }
+
+    fun withholding(p: string, items: array<SaftWithholding>): void {
+        for (w in items) {
+            if (w.withholdingTaxType != "") oneOf(p + ".WithholdingTaxType", w.withholdingTaxType, "IRS IRC IS")
+            optText(p + ".WithholdingTaxDescription", w.description, 60)
+            amount(p + ".WithholdingTaxAmount", w.amount)
+        }
+        return
+    }
+
+    // A control total matches if the declared value is the sum, or the sum rounded to
+    // the declared decimals: AT's demonstration file writes 3295.92 for 3295.922006.
+    fun control(path: string, declared: SaftDecimal, computed: SaftDecimal): void {
+        amount(path, declared)
+        val places = if (declared.scale < computed.scale) declared.scale else computed.scale
+        if (!declared.equalTo(computed) && !declared.rounded(places).equalTo(computed.rounded(places)))
+            error("control_total", path, "says ${declared.text()}, the documents add up to ${computed.text()}")
+        return
+    }
+
+    fun count(path: string, declared: int, computed: int): void {
+        if (declared != computed) error("control_total", path, "says $declared, there are $computed")
+        return
+    }
+
+    fun common(p: string, source: string, entry: string, customer: string, var customers: TextSet, eacCode: string, transactionId: string, month: int): void {
+        text(p + ".SourceID", source, 1, 30)
+        timestamp(p + ".SystemEntryDate", entry)
+        text(p + ".CustomerID", customer, 1, 30)
+        if (!customers.has(customer)) error("unknown_customer", p + ".CustomerID", "\"$customer\" isn't in the Customer table")
+        eac(p, eacCode)
+        transaction(p, transactionId)
+        period(p + ".Period", month)
+        return
+    }
+}
+
+private val LINE_INVOICE = 0
+private val LINE_MOVEMENT = 1
+private val LINE_WORK = 2
+
+// Membership by exact text, in hash buckets.
+private class TextSet(val buckets: array<array<string>> = array<array<string>>()) {
+    fun slot(value: string): int {
+        if (buckets.size == 0) for (i in 0 until 1024) buckets.append(array<string>())
+        var h = 5381
+        for (c in value) h = (h * 33 + c) & 0xFFFFFF
+        h % buckets.size
+    }
+
+    fun has(value: string): bool {
+        val at = slot(value)
+        for (item in buckets[at]) if (item == value) return true
+        false
+    }
+
+    // False if it was there already.
+    fun add(value: string): bool {
+        if (has(value)) return false
+        buckets[slot(value)].append(value)
+        true
+    }
+}
+
+private fun productSet(m: SaftMasterFiles): TextSet {
+    val set = TextSet()
+    for (p in m.products) set.add(p.productCode)
+    set
+}
+
+// Everything found, in file order. An empty result, or one with only warnings, means
+// the program found nothing wrong, not that AT would accept the file.
+fun saftCheck(file: SaftFile): array<SaftIssue> {
+    val c = Checker(array<SaftIssue>())
+    c.header(file.header)
+    c.masterFiles(file.masterFiles)
+    val customers = TextSet()
+    for (x in file.masterFiles.customers) customers.add(x.customerId)
+    val suppliers = TextSet()
+    for (x in file.masterFiles.suppliers) suppliers.add(x.supplierId)
+    val products = productSet(file.masterFiles)
+
+    val sales = file.salesInvoices
+    if (sales != null) {
+        val fresh = saftSalesInvoices(sales.invoices)
+        c.count("SalesInvoices.NumberOfEntries", sales.numberOfEntries, fresh.numberOfEntries)
+        c.control("SalesInvoices.TotalDebit", sales.totalDebit, fresh.totalDebit)
+        c.control("SalesInvoices.TotalCredit", sales.totalCredit, fresh.totalCredit)
+        val seen = TextSet()
+        for (d in sales.invoices) {
+            val p = "Invoice[${d.invoiceNo}]"
+            c.documentNumber(p, "InvoiceNo", d.invoiceNo, seen)
+            c.atcud(p, d.atcud, d.invoiceNo)
+            c.status(p + ".DocumentStatus", d.status, "N S A R F")
+            c.signature(p, d.hash, d.hashControl)
+            c.date(p + ".InvoiceDate", d.invoiceDate)
+            c.oneOf(p + ".InvoiceType", d.invoiceType, "FT FS FR ND NC VD TV TD AA DA RP RE CS LD RA")
+            c.indicator(p + ".SelfBillingIndicator", d.selfBillingIndicator)
+            c.indicator(p + ".CashVATSchemeIndicator", d.cashVatSchemeIndicator)
+            c.indicator(p + ".ThirdPartiesBillingIndicator", d.thirdPartiesBillingIndicator)
+            c.common(p, d.sourceId, d.systemEntryDate, d.customerId, customers, d.eacCode, d.transactionId, d.period)
+            c.shippingPoint(p + ".ShipTo", d.shipTo)
+            c.shippingPoint(p + ".ShipFrom", d.shipFrom)
+            c.optTimestamp(p + ".MovementEndTime", d.movementEndTime)
+            c.optTimestamp(p + ".MovementStartTime", d.movementStartTime)
+            if (d.lines.size == 0) c.error("required", p + ".Line", "needs at least one line")
+            for (l in d.lines) c.line(p, l, LINE_INVOICE, products)
+            c.totals(p + ".DocumentTotals", d.totals)
+            if (d.totals.settlementAmount != null) c.error("not_allowed", p + ".DocumentTotals", "SettlementAmount belongs to receipts")
+            c.withholding(p, d.withholding)
+            if (d.invoiceType == "NC")
+                for (l in d.lines) if (l.creditAmount != null) c.warning("portaria", p, "a credit note's lines normally go to DebitAmount")
+        }
+    }
+
+    val goods = file.movementOfGoods
+    if (goods != null) {
+        val fresh = saftMovementOfGoods(goods.movements)
+        c.count("MovementOfGoods.NumberOfMovementLines", goods.numberOfMovementLines, fresh.numberOfMovementLines)
+        c.control("MovementOfGoods.TotalQuantityIssued", goods.totalQuantityIssued, fresh.totalQuantityIssued)
+        val seen = TextSet()
+        for (d in goods.movements) {
+            val p = "StockMovement[${d.documentNumber}]"
+            c.documentNumber(p, "DocumentNumber", d.documentNumber, seen)
+            c.atcud(p, d.atcud, d.documentNumber)
+            c.status(p + ".DocumentStatus", d.status, "N T A F R")
+            c.signature(p, d.hash, d.hashControl)
+            c.date(p + ".MovementDate", d.movementDate)
+            c.oneOf(p + ".MovementType", d.movementType, "GR GT GA GC GD")
+            c.text(p + ".SourceID", d.sourceId, 1, 30)
+            c.timestamp(p + ".SystemEntryDate", d.systemEntryDate)
+            c.eac(p, d.eacCode)
+            c.transaction(p, d.transactionId)
+            c.period(p + ".Period", d.period)
+            if ((d.customerId == "") == (d.supplierId == "")) c.error("choice", p, "needs exactly one of CustomerID and SupplierID")
+            if (d.customerId != "" && !customers.has(d.customerId)) c.error("unknown_customer", p + ".CustomerID", "\"${d.customerId}\" isn't in the Customer table")
+            if (d.supplierId != "" && !suppliers.has(d.supplierId)) c.error("unknown_supplier", p + ".SupplierID", "\"${d.supplierId}\" isn't in the Supplier table")
+            c.optText(p + ".MovementComments", d.movementComments, 60)
+            c.shippingPoint(p + ".ShipTo", d.shipTo)
+            c.shippingPoint(p + ".ShipFrom", d.shipFrom)
+            c.optTimestamp(p + ".MovementEndTime", d.movementEndTime)
+            c.timestamp(p + ".MovementStartTime", d.movementStartTime)
+            c.optText(p + ".ATDocCodeID", d.atDocCodeId, 200)
+            if (d.lines.size == 0) c.error("required", p + ".Line", "needs at least one line")
+            for (l in d.lines) c.line(p, l, LINE_MOVEMENT, products)
+            c.totals(p + ".DocumentTotals", d.totals)
+        }
+    }
+
+    val work = file.workingDocuments
+    if (work != null) {
+        val fresh = saftWorkingDocuments(work.documents)
+        c.count("WorkingDocuments.NumberOfEntries", work.numberOfEntries, fresh.numberOfEntries)
+        c.control("WorkingDocuments.TotalDebit", work.totalDebit, fresh.totalDebit)
+        c.control("WorkingDocuments.TotalCredit", work.totalCredit, fresh.totalCredit)
+        val seen = TextSet()
+        for (d in work.documents) {
+            val p = "WorkDocument[${d.documentNumber}]"
+            c.documentNumber(p, "DocumentNumber", d.documentNumber, seen)
+            c.atcud(p, d.atcud, d.documentNumber)
+            c.status(p + ".DocumentStatus", d.status, "N A F")
+            c.signature(p, d.hash, d.hashControl)
+            c.date(p + ".WorkDate", d.workDate)
+            c.oneOf(p + ".WorkType", d.workType, "CM CC FC FO NE OU OR PF DC RP RE CS LD RA")
+            c.common(p, d.sourceId, d.systemEntryDate, d.customerId, customers, d.eacCode, d.transactionId, d.period)
+            if (d.lines.size == 0) c.error("required", p + ".Line", "needs at least one line")
+            for (l in d.lines) c.line(p, l, LINE_WORK, products)
+            c.totals(p + ".DocumentTotals", d.totals)
+        }
+    }
+
+    val receipts = file.payments
+    if (receipts != null) {
+        val fresh = saftPayments(receipts.payments)
+        c.count("Payments.NumberOfEntries", receipts.numberOfEntries, fresh.numberOfEntries)
+        c.control("Payments.TotalDebit", receipts.totalDebit, fresh.totalDebit)
+        c.control("Payments.TotalCredit", receipts.totalCredit, fresh.totalCredit)
+        val seen = TextSet()
+        for (d in receipts.payments) {
+            val p = "Payment[${d.paymentRefNo}]"
+            c.documentNumber(p, "PaymentRefNo", d.paymentRefNo, seen)
+            c.atcud(p, d.atcud, d.paymentRefNo)
+            c.transaction(p, d.transactionId)
+            c.period(p + ".Period", d.period)
+            c.date(p + ".TransactionDate", d.transactionDate)
+            c.oneOf(p + ".PaymentType", d.paymentType, "RC RG")
+            c.optText(p + ".Description", d.description, 200)
+            c.optText(p + ".SystemID", d.systemId, 60)
+            c.status(p + ".DocumentStatus", d.status, "N A")
+            for (m in d.methods) c.method(p + ".PaymentMethod", m)
+            c.common(p, d.sourceId, d.systemEntryDate, d.customerId, customers, "", "", 0)
+            if (d.lines.size == 0) c.error("required", p + ".Line", "needs at least one line")
+            for (l in d.lines) {
+                val q = "$p.Line[${l.lineNumber}]"
+                if (l.lineNumber < 0) c.error("negative", q, "LineNumber is negative")
+                if (l.sourceDocuments.size == 0) c.error("required", q + ".SourceDocumentID", "needs at least one")
+                for (s in l.sourceDocuments) {
+                    c.text(q + ".OriginatingON", s.originatingOn, 1, 60)
+                    c.date(q + ".InvoiceDate", s.invoiceDate)
+                    c.optText(q + ".Description", s.description, 200)
+                }
+                c.optAmount(q + ".SettlementAmount", l.settlementAmount)
+                if ((l.debitAmount == null) == (l.creditAmount == null)) c.error("choice", q, "needs exactly one of DebitAmount and CreditAmount")
+                c.optAmount(q + ".DebitAmount", l.debitAmount)
+                c.optAmount(q + ".CreditAmount", l.creditAmount)
+                c.tax(q, l.tax, LINE_WORK)
+                c.exemption(q, l.tax, l.taxExemptionReason, l.taxExemptionCode)
+                if (d.paymentType == "RC" && l.tax == null) c.error("assert", q + ".Tax", "a cash-VAT receipt (RC) needs Tax on every line")
+            }
+            c.totals(p + ".DocumentTotals", d.totals)
+            c.withholding(p, d.withholding)
+        }
+    }
+    val out: array<SaftIssue> = []
+    for (issue in c.issues) out.append(issue)
+    out
+}

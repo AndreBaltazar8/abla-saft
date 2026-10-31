@@ -1,0 +1,144 @@
+// Control totals of Portaria 302/2016, Annex I, tables 4.1 to 4.4, and document totals.
+import "decimal.ab"
+import "model.ab"
+import "abla/text"
+
+// NumberOfEntries counts every document. The two sums leave out A and F (4.1.1 to 4.1.3).
+fun saftSalesInvoices(invoices: array<SaftInvoice>): SaftSalesInvoices {
+    var debit = saftDecimalZero()
+    var credit = saftDecimalZero()
+    for (invoice in invoices) {
+        if (invoice.status.status != "A" && invoice.status.status != "F") {
+            debit = debit.plus(saftLinesDebit(invoice.lines))
+            credit = credit.plus(saftLinesCredit(invoice.lines))
+        }
+    }
+    SaftSalesInvoices(invoices.size, debit, credit, invoices)
+}
+
+// NumberOfMovementLines counts the lines of every document, and the quantity leaves out
+// status A alone (4.2.1, 4.2.2). AT's demonstration file agrees, with one F among them.
+fun saftMovementOfGoods(movements: array<SaftStockMovement>): SaftMovementOfGoods {
+    var count = 0
+    var quantity = saftDecimalZero()
+    for (movement in movements) {
+        count = count + movement.lines.size
+        if (movement.status.status != "A")
+            for (line in movement.lines) quantity = quantity.plus(line.quantity)
+    }
+    SaftMovementOfGoods(count, quantity, movements)
+}
+
+// The sums leave out status A alone (4.3.1 to 4.3.3), although F exists here too.
+fun saftWorkingDocuments(documents: array<SaftWorkDocument>): SaftWorkingDocuments {
+    var debit = saftDecimalZero()
+    var credit = saftDecimalZero()
+    for (document in documents) {
+        if (document.status.status != "A") {
+            debit = debit.plus(saftLinesDebit(document.lines))
+            credit = credit.plus(saftLinesCredit(document.lines))
+        }
+    }
+    SaftWorkingDocuments(documents.size, debit, credit, documents)
+}
+
+// The sums leave out status A (4.4.1 to 4.4.3).
+fun saftPayments(payments: array<SaftPayment>): SaftPayments {
+    var debit = saftDecimalZero()
+    var credit = saftDecimalZero()
+    for (payment in payments) {
+        if (payment.status.status != "A") {
+            for (line in payment.lines) {
+                val d = line.debitAmount
+                val c = line.creditAmount
+                if (d != null) debit = debit.plus(d)
+                if (c != null) credit = credit.plus(c)
+            }
+        }
+    }
+    SaftPayments(payments.size, debit, credit, payments)
+}
+
+fun saftLinesDebit(lines: array<SaftLine>): SaftDecimal {
+    var sum = saftDecimalZero()
+    for (line in lines) {
+        val amount = line.debitAmount
+        if (amount != null) sum = sum.plus(amount)
+    }
+    sum
+}
+
+fun saftLinesCredit(lines: array<SaftLine>): SaftDecimal {
+    var sum = saftDecimalZero()
+    for (line in lines) {
+        val amount = line.creditAmount
+        if (amount != null) sum = sum.plus(amount)
+    }
+    sum
+}
+
+// Credit lines add and debit lines subtract, so the sign says which way the document
+// went; the file's totals are absolute values (Annex I, 1 l)).
+fun saftLineBase(line: SaftLine): SaftDecimal {
+    val debit = line.debitAmount
+    val credit = line.creditAmount
+    if (debit != null) return debit.negated()
+    if (credit != null) return credit
+    saftDecimalZero()
+}
+
+private class TaxGroup(val key: string, var base: SaftDecimal, val percentage: SaftDecimal)
+
+// What a document's lines add up to. Percentages are applied to the sum of the lines
+// with the same type, region, code and rate, and that tax rounds half up to two
+// decimals. Neither the Portaria nor the Despacho says whether to round per line or
+// per rate (SOURCES.md, unconfirmed): a program that rounds per line can pass its own
+// totals, since nothing forces this function.
+fun saftComputeTotals(lines: array<SaftLine>): SaftDocumentTotals {
+    var net = saftDecimalZero()
+    var fixed = saftDecimalZero()
+    val groups: array<TaxGroup> = []
+    for (line in lines) {
+        net = net.plus(saftLineBase(line))
+        val tax = line.tax
+        if (tax != null) {
+            val negative = line.debitAmount != null
+            val unit = tax.amount
+            if (unit != null) {
+                val amount = unit.times(line.quantity)
+                fixed = if (negative) fixed.minus(amount) else fixed.plus(amount)
+            }
+            val percentage = tax.percentage
+            if (percentage != null && !percentage.isZero()) {
+                // TaxBase is per unit and stands in for the line amount (4.1.4.19.8).
+                val unitBase = line.taxBase
+                var base = saftLineBase(line)
+                if (unitBase != null) {
+                    val whole = unitBase.times(line.quantity)
+                    base = if (negative) whole.negated() else whole
+                }
+                val key = tax.taxType + "|" + tax.taxCountryRegion + "|" + tax.taxCode + "|" + percentage.rounded(6).text()
+                var found = false
+                for (group in groups) {
+                    if (group.key == key) {
+                        group.base = group.base.plus(base)
+                        found = true
+                    }
+                }
+                if (!found) groups.append(TaxGroup(key, base, percentage))
+            }
+        }
+    }
+    var tax = fixed
+    for (group in groups)
+        tax = tax.plus(group.base.times(group.percentage).dividedBy(dec("100"), 2))
+    val netRounded = net.abs().rounded(2)
+    val taxRounded = tax.abs().rounded(2)
+    SaftDocumentTotals(taxRounded, netRounded, netRounded.plus(taxRounded))
+}
+
+// Euros for an amount in another currency, multiplying by the rate. The Portaria calls
+// ExchangeRate the rate "used in the conversion to EUR" and doesn't give the direction
+// (SOURCES.md, unconfirmed), so the check doesn't compare CurrencyAmount and GrossTotal.
+fun saftEurosFromForeign(foreign: SaftDecimal, rate: SaftDecimal): SaftDecimal =
+    foreign.times(rate).rounded(2)
