@@ -45,7 +45,7 @@ summaries). Nothing in the code relies on them, apart from what's flagged in the
 | Hash and HashControl "0" unsigned | `SaftInvoice` defaults | P302 4.1.4.4, .5 | XSD accepts |
 | Consumidor final, 999999990, Desconhecido | `saftFinalConsumerTaxId`, `saftUnknown`, warning | P302 2.2.1 to 2.2.6 | |
 | Signed message and its order | `saftSignatureMessage` | P363 art. 6 n.º 1, art. 7 n.º 2; D8632 4.4 to 4.10 | The Despacho's example messages, by test |
-| RSA, PKCS#1 v1.5, SHA-1, 1024 bits, base 64, 172 characters | `pkcs1Sha1`, `saftSign` | D8632 6.2, 7.1. P363 names only RSA | openssl, with the Despacho's commands |
+| RSA, PKCS#1 v1.5, SHA-1, 1024 bits, base 64, 172 characters | `abla/crypto/rsa` (ablac), `saftSign` | D8632 6.2, 7.1. P363 names only RSA | openssl, with the Despacho's commands |
 | Empty Hash for the first, ";" still written | `saftSignatureMessage` | D8632 2.1.5, 7.1 | |
 | Multiannual series may restart each year | `saftVerifyChains` | D8632 2.1.5, 4.5 | |
 | Chain by type and series | `addToSeries` | P363 art. 6 n.º 1 e) | |

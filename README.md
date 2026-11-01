@@ -165,8 +165,12 @@ saftProcessedByText(invoice.hash, 1234)    // "AxAx-Processado por programa cert
   aren't signed. `saftSign(signer, date, entry, number, gross, previous)` signs bare fields.
 - `SaftSigner` is an interface with `keyVersion()` and `sign(message)`, so a key can live
   in a device or service. `SaftRsaSigner` is the implementation here: RSA PKCS#1 v1.5 with
-  SHA-1, as the Despacho requires, in pure Abla. **It isn't hardened** against timing or memory
-  disclosure, and Despacho 3.1.4 requires the private key to be protected even while signing.
+  SHA-1, as the Despacho requires, through ablac's `abla/crypto/rsa`: blinded, in constant-time
+  arithmetic, checked before it returns. That isn't the same as protected: Despacho 3.1.4 requires the
+  private key to be protected even while signing, and the signer holds its PEM as a string in memory, which
+  nothing wipes. What ablac's module does and doesn't promise is in its
+  `docs/stdlib/security-and-dates.md`. It needs randomness: on anything but x86-64 Linux, call
+  `cryptoSetRandom` first, or signing fails. This needs an ablac with `abla/crypto/rsa`.
 - Only 1024-bit keys are accepted: the Despacho fixes that size, and a larger signature
   wouldn't fit Hash's 172 characters.
 - `saftVerifyChains(file, key)` walks every series. A changed field, a replaced Hash, a removed
