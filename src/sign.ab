@@ -5,6 +5,7 @@
 // declared to it.
 import "abla/bytes"
 import "abla/crypto"
+import "abla/crypto/rsa"
 import "abla/text"
 import "check.ab"
 import "decimal.ab"
@@ -14,203 +15,6 @@ import "model.ab"
 // base 64 of 128 bytes.
 val saftSignatureBytes = 128
 val saftHashCharacters = 172
-
-// --- DER, adapted from abla-pdf ------------------------------------------------------
-
-private class Der(val tag: int, val begin: int, val end: int) {
-    fun ok(): bool = tag >= 0
-}
-
-private fun derAt(data: string, at: int, limit: int): Der {
-    val bad = Der(-1, at, at)
-    if (at < 0 || at + 2 > limit || limit > data.size) return bad
-    val tag = data[at]
-    if ((tag & 31) == 31) return bad
-    val first = data[at + 1]
-    var p = at + 2
-    var length = first
-    if (first == 0x80) return bad
-    if (first > 0x80) {
-        val count = first & 127
-        if (count > 4 || p + count > limit) return bad
-        length = 0
-        for (i in 0 until count) length = (length << 8) | data[p + i]
-        p = p + count
-    }
-    if (p + length > limit) return bad
-    Der(tag, p, p + length)
-}
-
-private fun stripZeros(bytes: string): string {
-    var i = 0
-    while (i < bytes.size && bytes[i] == 0) i = i + 1
-    bytes.slice(i, bytes.size)
-}
-
-// The DER inside the first PEM block, or "".
-private fun pemBody(pem: string): string {
-    val begin = pem.indexOf("-----BEGIN")
-    if (begin < 0) return ""
-    val bodyAt = pem.indexOf("\n", begin)
-    val end = pem.indexOf("-----END", begin)
-    if (bodyAt < 0 || end < bodyAt) return ""
-    val clean = byteBuffer()
-    for (b in pem.slice(bodyAt, end)) if (b > 32) clean.appendByteValue(b)
-    base64Decode(clean.toText())
-}
-
-// --- Big integers: little-endian 28-bit limbs, Montgomery multiplication, as abla-pdf -
-
-private val LIMB_BITS = 28
-private val LIMB_MASK = 0xfffffff
-
-private fun limbsFromBytes(bytes: string): array<int> {
-    val out: array<int> = []
-    var accumulator = 0
-    var bits = 0
-    var i = bytes.size - 1
-    while (i >= 0) {
-        accumulator = accumulator | (bytes[i] << bits)
-        bits = bits + 8
-        if (bits >= LIMB_BITS) {
-            out.append(accumulator & LIMB_MASK)
-            accumulator = accumulator >> LIMB_BITS
-            bits = bits - LIMB_BITS
-        }
-        i = i - 1
-    }
-    if (bits > 0) out.append(accumulator)
-    out
-}
-
-private fun bytesFromLimbs(limbs: array<int>, size: int): string {
-    val digits = filledArray(size, 0)
-    var accumulator = 0
-    var bits = 0
-    var at = size - 1
-    var i = 0
-    while (at >= 0) {
-        while (bits < 8 && i < limbs.size) {
-            accumulator = accumulator | (limbs[i] << bits)
-            bits = bits + LIMB_BITS
-            i = i + 1
-        }
-        digits[at] = accumulator & 255
-        accumulator = accumulator >> 8
-        bits = if (bits >= 8) bits - 8 else 0
-        at = at - 1
-    }
-    val out = byteBuffer()
-    for (d in digits) out.appendByteValue(d)
-    out.toText()
-}
-
-private fun compareLimbs(a: array<int>, b: array<int>): int {
-    var i = a.size - 1
-    while (i >= 0) {
-        val y = if (i < b.size) b[i] else 0
-        if (a[i] != y) return if (a[i] > y) 1 else -1
-        i = i - 1
-    }
-    0
-}
-
-private fun subtractInPlace(var a: array<int>, b: array<int>): void {
-    var borrow = 0
-    for (i in 0 until a.size) {
-        var v = a[i] - borrow - (if (i < b.size) b[i] else 0)
-        borrow = if (v < 0) 1 else 0
-        if (v < 0) v = v + (1 << LIMB_BITS)
-        a[i] = v
-    }
-    return
-}
-
-private class Modulus(val n: array<int>, val inverse: int, val rSquared: array<int>)
-
-private fun modulusFor(n: array<int>): Modulus {
-    // -n^-1 mod 2^28 by Newton's iteration.
-    val low = n[0]
-    var x = 1
-    for (i in 0 until 6) x = (x * (2 - low * x)) & LIMB_MASK
-    val inverse = (0 - x) & LIMB_MASK
-    // R^2 mod n by doubling, starting from 1.
-    val value = filledArray(n.size, 0)
-    value[0] = 1
-    for (i in 0 until 2 * n.size * LIMB_BITS) {
-        var carry = 0
-        for (k in 0 until value.size) {
-            val v = (value[k] << 1) | carry
-            value[k] = v & LIMB_MASK
-            carry = v >> LIMB_BITS
-        }
-        if (carry != 0 || compareLimbs(value, n) >= 0) subtractInPlace(value, n)
-    }
-    Modulus(n, inverse, value)
-}
-
-private fun montMul(a: array<int>, b: array<int>, m: Modulus): array<int> {
-    val n = m.n
-    val size = n.size
-    val t = filledArray(size + 2, 0)
-    for (i in 0 until size) {
-        var carry = 0
-        val bi = if (i < b.size) b[i] else 0
-        for (j in 0 until size) {
-            val v = t[j] + (if (j < a.size) a[j] else 0) * bi + carry
-            t[j] = v & LIMB_MASK
-            carry = v >> LIMB_BITS
-        }
-        var v = t[size] + carry
-        t[size] = v & LIMB_MASK
-        t[size + 1] = t[size + 1] + (v >> LIMB_BITS)
-        val q = (t[0] * m.inverse) & LIMB_MASK
-        v = t[0] + q * n[0]
-        carry = v >> LIMB_BITS
-        for (j in 1 until size) {
-            val w = t[j] + q * n[j] + carry
-            t[j - 1] = w & LIMB_MASK
-            carry = w >> LIMB_BITS
-        }
-        v = t[size] + carry
-        t[size - 1] = v & LIMB_MASK
-        t[size] = t[size + 1] + (v >> LIMB_BITS)
-        t[size + 1] = 0
-    }
-    val out = filledArray(size, 0)
-    for (i in 0 until size) out[i] = t[i]
-    if (t[size] != 0 || compareLimbs(out, n) >= 0) subtractInPlace(out, n)
-    out
-}
-
-// base^exponent mod the modulus, all big-endian byte strings. Square and multiply
-// always, which hides little: see SaftRsaSigner.
-private fun modPow(base: string, exponent: string, modulusBytes: string): string {
-    val n = limbsFromBytes(modulusBytes)
-    if (n.size == 0 || (n[0] & 1) == 0) return ""
-    val m = modulusFor(n)
-    val inMont = montMul(limbsFromBytes(base), m.rSquared, m)
-    val one = filledArray(n.size, 0)
-    one[0] = 1
-    var result = montMul(one, m.rSquared, m)
-    for (byte in exponent) {
-        var bit = 7
-        while (bit >= 0) {
-            result = montMul(result, result, m)
-            val multiplied = montMul(result, inMont, m)
-            if (((byte >> bit) & 1) == 1) result = multiplied
-            bit = bit - 1
-        }
-    }
-    bytesFromLimbs(montMul(result, one, m), modulusBytes.size)
-}
-
-// EMSA-PKCS1-v1_5 with the SHA-1 DigestInfo of RFC 8017, section 9.2, note 1.
-private fun pkcs1Sha1(message: string, size: int): string {
-    val info = "\x30\x21\x30\x09\x06\x05\x2b\x0e\x03\x02\x1a\x05\x00\x04\x14" + sha1(message)
-    if (size < info.size + 11) return ""
-    "\x00\x01" + "\xff".repeat(size - info.size - 3) + "\x00" + info
-}
 
 // --- Keys and signers ----------------------------------------------------------------
 
@@ -222,16 +26,18 @@ interface SaftSigner {
     fun sign(message: string): string
 }
 
-// A key in memory. This pure Abla code isn't hardened against timing or memory
-// disclosure, and Despacho 3.1.4 asks that the private key be protected "even during
-// the signature process": that protection is the application's.
-class SaftRsaSigner(val modulus: string, val exponent: string, val version: int) : SaftSigner {
+// A key in memory, signing through abla/crypto/rsa: blinded, in constant-time arithmetic, and checked
+// before it's returned. Despacho 3.1.4 asks that the private key be protected "even during the signature
+// process", and the PEM it was read from is the application's to protect. What ablac's module does
+// and doesn't promise is in its docs/stdlib/security-and-dates.md.
+class SaftRsaSigner(val pem: string, val version: int) : SaftSigner {
     fun keyVersion(): int = version
 
+    // The key is read for each signature, so its numbers are wiped from memory after it.
     fun sign(message: string): string {
-        val encoded = pkcs1Sha1(message, modulus.size)
-        if (encoded == "") return ""
-        modPow(encoded, exponent, modulus)
+        val key = rsaPrivateKeyFromPem(pem)
+        val signed = key.signPkcs1Sha1Legacy(message)
+        if (signed.ok) signed.bytes else ""
     }
 }
 
@@ -240,59 +46,20 @@ class SaftRsaSignerResult(val signer: SaftRsaSigner?, val error: string)
 // From a PEM private key, PKCS#1 ("RSA PRIVATE KEY") or PKCS#8 ("PRIVATE KEY"),
 // unencrypted. Refuses any modulus but 1024 bits, whose signature wouldn't fit Hash.
 fun saftRsaSignerFromPem(pem: string, version: int = 1): SaftRsaSignerResult {
-    val der = pemBody(pem)
-    val fail = SaftRsaSignerResult(null, "not an unencrypted RSA private key in PEM")
-    val outer = derAt(der, 0, der.size)
-    if (outer.tag != 0x30) return fail
-    val first = derAt(der, outer.begin, outer.end)
-    if (first.tag != 2) return fail
-    val next = derAt(der, first.end, outer.end)
-    var data = der
-    var body = outer
-    if (next.tag == 0x30) {
-        val octets = derAt(der, next.end, outer.end)
-        if (octets.tag != 4) return fail
-        data = der.slice(octets.begin, octets.end)
-        body = derAt(data, 0, data.size)
-        if (body.tag != 0x30) return fail
-    }
-    val v = derAt(data, body.begin, body.end)
-    val n = derAt(data, v.end, body.end)
-    val e = derAt(data, n.end, body.end)
-    val d = derAt(data, e.end, body.end)
-    if (v.tag != 2 || n.tag != 2 || e.tag != 2 || d.tag != 2) return fail
-    val modulus = stripZeros(data.slice(n.begin, n.end))
-    if (modulus.size != saftSignatureBytes)
-        return SaftRsaSignerResult(null, "the key has ${modulus.size * 8} bits; Despacho 8632/2014 requires 1024")
+    val key = rsaPrivateKeyFromPem(pem)
+    if (!key.ok()) return SaftRsaSignerResult(null, "not an unencrypted RSA private key in PEM")
+    if (key.bits != saftSignatureBytes * 8)
+        return SaftRsaSignerResult(null, "the key has ${key.bits} bits; Despacho 8632/2014 requires 1024")
     if (version < 1) return SaftRsaSignerResult(null, "key versions are sequential integers from 1")
-    SaftRsaSignerResult(SaftRsaSigner(modulus, stripZeros(data.slice(d.begin, d.end)), version), "")
+    SaftRsaSignerResult(SaftRsaSigner(pem, version), "")
 }
 
-class SaftRsaPublicKey(val modulus: string, val exponent: string) {
-    fun ok(): bool = modulus.size > 0 && exponent.size > 0
+class SaftRsaPublicKey(val key: RsaPublicKey) {
+    fun ok(): bool = key.ok()
 }
 
 // From a PEM public key ("PUBLIC KEY" or "RSA PUBLIC KEY"). Not ok() on anything else.
-fun saftRsaPublicKeyFromPem(pem: string): SaftRsaPublicKey {
-    val der = pemBody(pem)
-    val bad = SaftRsaPublicKey("", "")
-    val outer = derAt(der, 0, der.size)
-    if (outer.tag != 0x30) return bad
-    val first = derAt(der, outer.begin, outer.end)
-    var data = der
-    var body = outer
-    if (first.tag == 0x30) {
-        val bits = derAt(der, first.end, outer.end)
-        if (bits.tag != 3 || bits.end <= bits.begin) return bad
-        data = der.slice(bits.begin + 1, bits.end)
-        body = derAt(data, 0, data.size)
-        if (body.tag != 0x30) return bad
-    }
-    val n = derAt(data, body.begin, body.end)
-    val e = derAt(data, n.end, body.end)
-    if (n.tag != 2 || e.tag != 2) return bad
-    SaftRsaPublicKey(stripZeros(data.slice(n.begin, n.end)), stripZeros(data.slice(e.begin, e.end)))
-}
+fun saftRsaPublicKeyFromPem(pem: string): SaftRsaPublicKey = SaftRsaPublicKey(rsaPublicKeyFromPem(pem))
 
 // --- Signing -------------------------------------------------------------------------
 
@@ -370,10 +137,7 @@ fun saftIntegratedHashControl(certificateNumber: int, version: int): string =
 // True if `hash` is a valid signature of `message` under `key`.
 fun saftVerifySignature(key: SaftRsaPublicKey, message: string, hash: string): bool {
     if (!key.ok() || hash.size != saftHashCharacters) return false
-    val raw = base64Decode(hash)
-    if (raw.size != key.modulus.size) return false
-    val expected = pkcs1Sha1(message, key.modulus.size)
-    expected != "" && modPow(raw, key.exponent, key.modulus) == expected
+    key.key.verifyPkcs1Sha1Legacy(message, base64Decode(hash))
 }
 
 // The four characters at positions 1, 11, 21 and 31 (article 6 n.º 3 a)), or "" if
