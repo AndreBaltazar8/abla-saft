@@ -1,0 +1,3 @@
+# The XSD part is a flat module: ablac 0.2.30 lets a strict module see nothing of a provider
+# subpath it imports (ablac TODO, "A strict module ... sees nothing of a provider subpath").
+visibility = "program"

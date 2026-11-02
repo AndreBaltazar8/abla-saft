@@ -1,0 +1,134 @@
+# One change each to a valid file, for tests/xsd_test.ab: name, file, which occurrence of the text
+# (from 1), the text, and what replaces it. Tab-separated; \n is a line feed. The schema's verdict
+# on each, and where its first error is, are in expected.txt, recorded from another validator
+# (tools/xsd-expected.py). Files under .sources/ come from `make sources`.
+same-ft	tests/golden/invoice-FT.xml	1	<HashControl>1</HashControl>	<HashControl>1</HashControl>
+same-ledger	tests/xsd/ledger.xml	1	<Period>3</Period>	<Period>3</Period>
+same-demo	.sources/saft_idemo599999999.xml	1	<TaxonomyReference>S</TaxonomyReference>	<TaxonomyReference>S</TaxonomyReference>
+type-decimal-comma	tests/golden/invoice-FT.xml	1	<UnitPrice>10.50</UnitPrice>	<UnitPrice>10,50</UnitPrice>
+type-decimal-exponent	tests/golden/invoice-FT.xml	1	<Quantity>2</Quantity>	<Quantity>2e0</Quantity>
+type-decimal-empty	tests/golden/invoice-FT.xml	1	<UnitPrice>10.50</UnitPrice>	<UnitPrice/>
+type-decimal-spaces	tests/golden/invoice-FT.xml	1	<UnitPrice>10.50</UnitPrice>	<UnitPrice>  10.50\n </UnitPrice>
+type-decimal-plus-point	tests/golden/invoice-FT.xml	1	<Quantity>2</Quantity>	<Quantity>+2.</Quantity>
+type-decimal-leading-point	tests/golden/invoice-FT.xml	1	<Quantity>2</Quantity>	<Quantity>.5</Quantity>
+type-decimal-sign-only	tests/golden/invoice-FT.xml	1	<Quantity>2</Quantity>	<Quantity>-</Quantity>
+type-date-february-30	tests/golden/invoice-FT.xml	1	<InvoiceDate>2026-03-14</InvoiceDate>	<InvoiceDate>2026-02-30</InvoiceDate>
+type-date-leap-day	tests/golden/invoice-FT.xml	1	<InvoiceDate>2026-03-14</InvoiceDate>	<InvoiceDate>2024-02-29</InvoiceDate>
+type-date-not-leap	tests/golden/invoice-FT.xml	1	<InvoiceDate>2026-03-14</InvoiceDate>	<InvoiceDate>2100-02-29</InvoiceDate>
+type-date-zone	tests/golden/invoice-FT.xml	1	<InvoiceDate>2026-03-14</InvoiceDate>	<InvoiceDate>2026-03-14+01:00</InvoiceDate>
+type-date-bad-zone	tests/golden/invoice-FT.xml	1	<InvoiceDate>2026-03-14</InvoiceDate>	<InvoiceDate>2026-03-14+15:00</InvoiceDate>
+type-date-short-year	tests/golden/invoice-FT.xml	1	<InvoiceDate>2026-03-14</InvoiceDate>	<InvoiceDate>226-03-14</InvoiceDate>
+type-datetime-space	tests/golden/invoice-FT.xml	1	<SystemEntryDate>2026-03-14T10:20:30</SystemEntryDate>	<SystemEntryDate>2026-03-14 10:20:30</SystemEntryDate>
+type-datetime-no-seconds	tests/golden/invoice-FT.xml	1	<SystemEntryDate>2026-03-14T10:20:30</SystemEntryDate>	<SystemEntryDate>2026-03-14T10:20</SystemEntryDate>
+type-datetime-fraction	tests/golden/invoice-FT.xml	1	<SystemEntryDate>2026-03-14T10:20:30</SystemEntryDate>	<SystemEntryDate>2026-03-14T10:20:30.125Z</SystemEntryDate>
+type-datetime-24	tests/golden/invoice-FT.xml	1	<SystemEntryDate>2026-03-14T10:20:30</SystemEntryDate>	<SystemEntryDate>2026-03-14T24:00:00</SystemEntryDate>
+type-datetime-24-01	tests/golden/invoice-FT.xml	1	<SystemEntryDate>2026-03-14T10:20:30</SystemEntryDate>	<SystemEntryDate>2026-03-14T24:00:01</SystemEntryDate>
+type-datetime-minute-60	tests/golden/invoice-FT.xml	1	<SystemEntryDate>2026-03-14T10:20:30</SystemEntryDate>	<SystemEntryDate>2026-03-14T10:60:30</SystemEntryDate>
+type-integer-point	tests/golden/invoice-FT.xml	1	<LineNumber>1</LineNumber>	<LineNumber>1.0</LineNumber>
+type-integer-negative	tests/golden/invoice-FT.xml	1	<LineNumber>1</LineNumber>	<LineNumber>-1</LineNumber>
+type-integer-plus	tests/golden/invoice-FT.xml	1	<LineNumber>1</LineNumber>	<LineNumber>+1</LineNumber>
+type-nif-short	tests/golden/invoice-FT.xml	1	<TaxRegistrationNumber>599999993</TaxRegistrationNumber>	<TaxRegistrationNumber>59999999</TaxRegistrationNumber>
+type-nif-leading-zeros	tests/golden/invoice-FT.xml	1	<TaxRegistrationNumber>599999993</TaxRegistrationNumber>	<TaxRegistrationNumber>000599999993</TaxRegistrationNumber>
+type-indicator-2	tests/golden/invoice-FT.xml	3	<SelfBillingIndicator>0</SelfBillingIndicator>	<SelfBillingIndicator>2</SelfBillingIndicator>
+type-cdata	tests/golden/invoice-FT.xml	1	<SourceID>ana</SourceID>	<SourceID><![CDATA[ana]]></SourceID>
+type-reference	tests/golden/invoice-FT.xml	1	<UnitOfMeasure>UN</UnitOfMeasure>	<UnitOfMeasure>&#85;N</UnitOfMeasure>
+total-negative	tests/golden/invoice-FT.xml	1	<TotalCredit>25.99995</TotalCredit>	<TotalCredit>-25.99995</TotalCredit>
+total-not-a-number	tests/golden/invoice-FT.xml	1	<TotalDebit>0.00</TotalDebit>	<TotalDebit>0.0.0</TotalDebit>
+total-entries-negative	tests/golden/invoice-FT.xml	1	<NumberOfEntries>1</NumberOfEntries>	<NumberOfEntries>-1</NumberOfEntries>
+total-entries-wrong	tests/golden/invoice-FT.xml	1	<NumberOfEntries>1</NumberOfEntries>	<NumberOfEntries>7</NumberOfEntries>
+total-gross-wrong	tests/golden/invoice-FT.xml	1	<GrossTotal>31.13</GrossTotal>	<GrossTotal>99.99</GrossTotal>
+total-amount-negative	tests/golden/invoice-FT.xml	1	<CreditAmount>21.00</CreditAmount>	<CreditAmount>-21.00</CreditAmount>
+total-negative-zero	tests/golden/invoice-FT.xml	1	<TotalDebit>0.00</TotalDebit>	<TotalDebit>-0.00</TotalDebit>
+missing-atcud	tests/golden/invoice-FT.xml	1	<ATCUD>ABCD1234-1</ATCUD>	
+missing-tax-payable	tests/golden/invoice-FT.xml	1	<TaxPayable>5.13</TaxPayable>	
+missing-customer	tests/golden/invoice-FT.xml	2	<CustomerID>C1</CustomerID>	
+missing-last	tests/golden/invoice-FT.xml	1	<GrossTotal>31.13</GrossTotal>	
+missing-header	tests/golden/invoice-FT.xml	1	<AuditFileVersion>1.04_01</AuditFileVersion>	
+missing-tax	tests/golden/invoice-FT.xml	1	          <Tax>\n            <TaxType>IVA</TaxType>\n            <TaxCountryRegion>PT</TaxCountryRegion>\n            <TaxCode>RED</TaxCode>\n            <TaxPercentage>6</TaxPercentage>\n          </Tax>\n	
+missing-movement-start	tests/golden/movement-GT.xml	1	<MovementStartTime>2026-03-14T11:00:00</MovementStartTime>	
+pattern-invoice-no	tests/golden/invoice-FT.xml	1	<InvoiceNo>FT A/1</InvoiceNo>	<InvoiceNo>FTA/1</InvoiceNo>
+pattern-invoice-no-caret	tests/golden/invoice-FT.xml	1	<InvoiceNo>FT A/1</InvoiceNo>	<InvoiceNo>FT A^/1</InvoiceNo>
+pattern-hash-control	tests/golden/invoice-FT.xml	1	<HashControl>1</HashControl>	<HashControl>1-X</HashControl>
+pattern-hash-control-manual	tests/golden/invoice-FT.xml	1	<HashControl>1</HashControl>	<HashControl>1-FTM abc/00001</HashControl>
+pattern-country	tests/golden/invoice-FT.xml	1	<Country>PT</Country>	<Country>XX</Country>
+pattern-country-lower	tests/golden/invoice-FT.xml	1	<Country>PT</Country>	<Country>pt</Country>
+pattern-customer-country-unknown	tests/golden/invoice-FT.xml	1	<Country>Desconhecido</Country>	<Country>Unknown</Country>
+pattern-version	tests/golden/invoice-FT.xml	1	<AuditFileVersion>1.04_01</AuditFileVersion>	<AuditFileVersion>1.04</AuditFileVersion>
+pattern-region	tests/golden/regions.xml	1	<TaxCountryRegion>PT-AC</TaxCountryRegion>	<TaxCountryRegion>PT-XX</TaxCountryRegion>
+pattern-tax-code	tests/golden/invoice-FT.xml	4	<TaxCode>NOR</TaxCode>	<TaxCode>N-R</TaxCode>
+pattern-tax-code-long	tests/golden/invoice-FT.xml	4	<TaxCode>NOR</TaxCode>	<TaxCode>ABCDEFGHIJK</TaxCode>
+pattern-exemption-code	tests/golden/exemptions.xml	1	<TaxExemptionCode>M07</TaxExemptionCode>	<TaxExemptionCode>M7</TaxExemptionCode>
+pattern-exemption-code-twice	tests/golden/exemptions.xml	1	<TaxExemptionCode>M07</TaxExemptionCode>	<TaxExemptionCode>M07M99</TaxExemptionCode>
+pattern-document-number	tests/golden/work-PF.xml	1	<DocumentNumber>PF A/1</DocumentNumber>	<DocumentNumber>PF A/1x</DocumentNumber>
+pattern-product-id	tests/golden/invoice-FT.xml	1	<ProductID>abla-saft tests/Exemplo</ProductID>	<ProductID>abla-saft tests</ProductID>
+pattern-cn-code	tests/golden/invoice-FT.xml	1	<CNCode>19059090</CNCode>	<CNCode>1905909</CNCode>
+pattern-transaction-id	tests/xsd/ledger.xml	1	<TransactionID>2026-03-14 V 1</TransactionID>	<TransactionID>2026-3-14 V 1</TransactionID>
+pattern-company-id	tests/xsd/ledger.xml	1	<CompanyID>599999993</CompanyID>	<CompanyID>59999999</CompanyID>
+enum-invoice-type	tests/golden/invoice-FT.xml	1	<InvoiceType>FT</InvoiceType>	<InvoiceType>XX</InvoiceType>
+enum-invoice-type-space	tests/golden/invoice-FT.xml	1	<InvoiceType>FT</InvoiceType>	<InvoiceType> FT</InvoiceType>
+enum-currency	tests/golden/invoice-FT.xml	1	<CurrencyCode>EUR</CurrencyCode>	<CurrencyCode>USD</CurrencyCode>
+enum-work-type	tests/golden/work-PF.xml	1	<WorkType>PF</WorkType>	<WorkType>XX</WorkType>
+enum-movement-type	tests/golden/movement-GT.xml	1	<MovementType>GT</MovementType>	<MovementType>GX</MovementType>
+enum-payment-type	tests/golden/receipt-RG.xml	1	<PaymentType>RG</PaymentType>	<PaymentType>RX</PaymentType>
+enum-taxonomy-reference	.sources/saft_idemo599999999.xml	1	<TaxonomyReference>S</TaxonomyReference>	<TaxonomyReference>X</TaxonomyReference>
+length-source-id	tests/golden/invoice-FT.xml	1	<SourceID>ana</SourceID>	<SourceID>abcdefghijabcdefghijabcdefghijk</SourceID>
+length-product-description	tests/golden/invoice-FT.xml	1	<ProductCode>S1</ProductCode>	<ProductCode></ProductCode>
+length-unit-empty	tests/golden/invoice-FT.xml	1	<UnitOfMeasure>UN</UnitOfMeasure>	<UnitOfMeasure></UnitOfMeasure>
+length-eac-code	tests/golden/invoice-FT.xml	1	<SourceID>ana</SourceID>\n        <SystemEntryDate>	<SourceID>ana</SourceID>\n        <EACCode>1234</EACCode>\n        <SystemEntryDate>
+range-fiscal-year	tests/golden/invoice-FT.xml	1	<FiscalYear>2026</FiscalYear>	<FiscalYear>1999</FiscalYear>
+range-start-date	tests/golden/invoice-FT.xml	1	<StartDate>2026-01-01</StartDate>	<StartDate>1999-12-31</StartDate>
+range-period	tests/golden/invoice-FT.xml	1	<HashControl>1</HashControl>	<HashControl>1</HashControl>\n        <Period>13</Period>
+range-accounting-period	tests/xsd/ledger.xml	1	<Period>13</Period>	<Period>17</Period>
+range-taxonomy-code	tests/xsd/ledger.xml	1	<TaxonomyCode>499</TaxonomyCode>	<TaxonomyCode>1000</TaxonomyCode>
+order-date-type	tests/golden/invoice-FT.xml	1	<InvoiceDate>2026-03-14</InvoiceDate>\n        <InvoiceType>FT</InvoiceType>	<InvoiceType>FT</InvoiceType>\n        <InvoiceDate>2026-03-14</InvoiceDate>
+order-totals	tests/golden/invoice-FT.xml	1	<TaxPayable>5.13</TaxPayable>\n          <NetTotal>26.00</NetTotal>	<NetTotal>26.00</NetTotal>\n          <TaxPayable>5.13</TaxPayable>
+order-master-files	tests/golden/invoice-FT.xml	1	<Supplier>	<Product><ProductType>P</ProductType><ProductCode>P0</ProductCode><ProductDescription>Bolo</ProductDescription><ProductNumberCode>P0</ProductNumberCode></Product><Supplier>
+order-ledger-lines	tests/xsd/ledger.xml	1	</DebitLine>\n          <DebitLine>	</DebitLine>\n          <CreditLine><RecordID>9</RecordID><AccountID>111</AccountID><SystemEntryDate>2026-03-14T10:20:30</SystemEntryDate><Description>x</Description><CreditAmount>0.00</CreditAmount></CreditLine>\n          <DebitLine>
+extra-element	tests/golden/invoice-FT.xml	1	<ATCUD>ABCD1234-1</ATCUD>	<ATCUD>ABCD1234-1</ATCUD><Extra>1</Extra>
+extra-second-hash	tests/golden/invoice-FT.xml	1	<HashControl>1</HashControl>	<HashControl>1</HashControl><HashControl>1</HashControl>
+extra-after-end	tests/golden/invoice-FT.xml	1	</SourceDocuments>	</SourceDocuments><SourceDocuments/>
+extra-in-simple	tests/golden/invoice-FT.xml	1	<InvoiceType>FT</InvoiceType>	<InvoiceType>F<b/>T</InvoiceType>
+extra-text	tests/golden/invoice-FT.xml	1	<SpecialRegimes>	<SpecialRegimes>x
+extra-attribute	tests/golden/invoice-FT.xml	1	<Invoice>	<Invoice id="1">
+extra-xsi-type	tests/golden/invoice-FT.xml	1	<Invoice>	<Invoice xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Tax">
+extra-schema-location	tests/golden/invoice-FT.xml	1	<AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:PT_1.04_01">	<AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:PT_1.04_01" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:OECD:StandardAuditFile-Tax:PT_1.04_01 saft.xsd">
+extra-comment	tests/golden/invoice-FT.xml	1	<LineNumber>1</LineNumber>	<LineNumber>1</LineNumber><!-- c --><?pi x?>
+extra-choice-both	tests/golden/movement-GT.xml	1	<CustomerID>C1</CustomerID>\n        <SourceID>	<CustomerID>C1</CustomerID><SupplierID>S1</SupplierID>\n        <SourceID>
+extra-ledger-choice-both	tests/xsd/ledger.xml	2	<CustomerID>C1</CustomerID>	<CustomerID>C1</CustomerID><SupplierID>S1</SupplierID>
+namespace-root	tests/golden/invoice-FT.xml	1	<AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:PT_1.04_01">	<AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:PT_1.04">
+namespace-child	tests/golden/invoice-FT.xml	1	<InvoiceType>FT</InvoiceType>	<InvoiceType xmlns="">FT</InvoiceType>
+namespace-prefixed	tests/golden/invoice-FT.xml	1	<InvoiceType>FT</InvoiceType>	<s:InvoiceType xmlns:s="urn:OECD:StandardAuditFile-Tax:PT_1.04_01">FT</s:InvoiceType>
+identity-customer-unknown	tests/golden/invoice-FT.xml	2	<CustomerID>C1</CustomerID>	<CustomerID>C9</CustomerID>
+identity-product-unknown	tests/golden/invoice-FT.xml	2	<ProductCode>P1</ProductCode>	<ProductCode>P9</ProductCode>
+identity-customer-twice	tests/golden/invoice-FT.xml	1	<CustomerID>C2</CustomerID>	<CustomerID>C1</CustomerID>
+identity-customer-spaces	tests/golden/invoice-FT.xml	2	<CustomerID>C1</CustomerID>	<CustomerID>C1 </CustomerID>
+identity-movement-supplier	tests/golden/movement-GT.xml	1	<CustomerID>C1</CustomerID>\n        <SourceID>	<SupplierID>S9</SupplierID>\n        <SourceID>
+identity-receipt-customer	tests/golden/receipt-RC.xml	2	<CustomerID>C1</CustomerID>	<CustomerID>C7</CustomerID>
+identity-ledger-account	tests/xsd/ledger.xml	2	<AccountID>711</AccountID>	<AccountID>799</AccountID>
+identity-ledger-grouping	tests/xsd/ledger.xml	1	<GroupingCode>11</GroupingCode>	<GroupingCode>12</GroupingCode>
+identity-ledger-transaction-twice	tests/xsd/ledger.xml	1	<TransactionID>2026-03-15 V 2</TransactionID>	<TransactionID>2026-03-14 V 1</TransactionID>
+identity-ledger-account-twice	tests/xsd/ledger.xml	1	<AccountID>71</AccountID>	<AccountID>11</AccountID>
+identity-ledger-customer	tests/xsd/ledger.xml	2	<CustomerID>C1</CustomerID>	<CustomerID>C9</CustomerID>
+assert-percentage-zero	tests/golden/invoice-FT.xml	2	<TaxPercentage>23</TaxPercentage>	<TaxPercentage>0</TaxPercentage>
+assert-percentage-zero-decimal	tests/golden/invoice-FT.xml	2	<TaxPercentage>23</TaxPercentage>	<TaxPercentage>0.000</TaxPercentage>
+assert-reason-without-code	tests/golden/invoice-FT.xml	1	          </Tax>\n        </Line>	          </Tax>\n          <TaxExemptionReason>Artigo 9.o do CIVA</TaxExemptionReason>\n        </Line>
+assert-code-without-reason	tests/golden/exemptions.xml	1	<TaxExemptionCode>M07</TaxExemptionCode>	
+assert-exempt-reason-removed	tests/golden/exemptions.xml	1	<TaxExemptionReason>Artigo 9.	<TaxExemptionReasonX>Artigo 9.
+assert-tax-base-with-price	tests/golden/invoice-FT.xml	1	<UnitPrice>10.50</UnitPrice>	<UnitPrice>10.50</UnitPrice>\n          <TaxBase>1.00</TaxBase>
+assert-tax-base-with-amount	tests/golden/invoice-FT.xml	1	<UnitPrice>10.50</UnitPrice>	<UnitPrice>0</UnitPrice>\n          <TaxBase>1.00</TaxBase>
+assert-tax-amount-zero	tests/golden/invoice-FT.xml	1	<TaxPercentage>6</TaxPercentage>	<TaxAmount>0.00</TaxAmount>
+assert-tax-amount	tests/golden/invoice-FT.xml	1	<TaxPercentage>6</TaxPercentage>	<TaxAmount>0.30</TaxAmount>
+assert-movement-zero	tests/golden/movement-GT.xml	2	<TaxPercentage>23</TaxPercentage>	<TaxPercentage>0</TaxPercentage>
+assert-work-zero	tests/golden/work-PF.xml	2	<TaxPercentage>23</TaxPercentage>	<TaxPercentage>0</TaxPercentage>
+assert-receipt-zero	tests/golden/receipt-RC.xml	2	<TaxPercentage>23</TaxPercentage>	<TaxPercentage>0</TaxPercentage>
+assert-receipt-rc-no-tax	tests/golden/receipt-RC.xml	1	          <Tax>\n            <TaxType>IVA</TaxType>\n            <TaxCountryRegion>PT</TaxCountryRegion>\n            <TaxCode>NOR</TaxCode>\n            <TaxPercentage>23</TaxPercentage>\n          </Tax>\n        </Line>	        </Line>
+assert-receipt-rg-no-tax	tests/golden/receipt-RG.xml	1	          <Tax>\n            <TaxType>IVA</TaxType>\n            <TaxCountryRegion>PT</TaxCountryRegion>\n            <TaxCode>NOR</TaxCode>\n            <TaxPercentage>23</TaxPercentage>\n          </Tax>\n        </Line>	        </Line>
+assert-receipt-rc-second-line	tests/golden/receipt-RC.xml	1	        </Line>	        </Line>\n        <Line><LineNumber>2</LineNumber><SourceDocumentID><OriginatingON>FT A/1</OriginatingON><InvoiceDate>2026-03-14</InvoiceDate></SourceDocumentID><CreditAmount>1.00</CreditAmount></Line>
+assert-account-gm-no-taxonomy	tests/xsd/ledger.xml	1	<TaxonomyCode>1</TaxonomyCode>	
+assert-account-gr-taxonomy	tests/xsd/ledger.xml	1	<GroupingCategory>GR</GroupingCategory>	<GroupingCategory>GR</GroupingCategory>\n        <TaxonomyCode>2</TaxonomyCode>
+assert-account-gr-grouping	tests/xsd/ledger.xml	1	<GroupingCategory>GR</GroupingCategory>	<GroupingCategory>GR</GroupingCategory>\n        <GroupingCode>71</GroupingCode>
+assert-account-gm-no-grouping	tests/xsd/ledger.xml	1	<GroupingCode>11</GroupingCode>	
+assert-account-ga	tests/xsd/ledger.xml	1	<GroupingCategory>GM</GroupingCategory>	<GroupingCategory>GA</GroupingCategory>
+assert-demo-account	.sources/saft_idemo599999999.xml	1	<GroupingCategory>GA</GroupingCategory>	<GroupingCategory>GR</GroupingCategory>
+all-no-credit	tests/xsd/ledger.xml	1	          <CreditLine>\n            <RecordID>5</RecordID>\n            <AccountID>111</AccountID>\n            <SystemEntryDate>2026-03-15T09:00:00</SystemEntryDate>\n            <Description>Regularização</Description>\n            <CreditAmount>20.00</CreditAmount>\n          </CreditLine>\n	
+all-unknown	tests/xsd/ledger.xml	1	<Lines>	<Lines><OtherLine/>

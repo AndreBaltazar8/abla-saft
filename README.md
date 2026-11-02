@@ -190,18 +190,39 @@ saftProcessedByText(invoice.hash, 1234)    // "AxAx-Processado por programa cert
   [abla-qr](https://github.com/AndreBaltazar8/abla-qr): level M, byte mode, version 9 or more.
   The 30 x 30 mm minimum is the printed layout's to respect.
 
+## The official XSD
+
+`import github("AndreBaltazar8/abla-saft/xsd")` validates a file against the official schema with
+[abla-xml](https://github.com/AndreBaltazar8/abla-xml)'s XML Schema 1.1 validator. The schema isn't
+shipped (SOURCES.md): `make sources` fetches it, and the caller gives its bytes.
+
+```abla
+val xsd = saftXsdLoad(path(".sources/saftpt1.04_01.xsd").readText())   // schema, official, error
+val schema = xsd.schema
+if (schema != null && xsd.official) {
+    val v = saftXsdValidateFile(schema, path("saft.xml"))   // streaming, any size
+    for (e in v.errors) eprintln("${e.message} at ${e.path} (line ${e.elementLine})")
+}
+```
+
+`official` says the bytes are those of `saftpt1.04_01.xsd` (`saftXsdSha256`). `saftXsdValidate(schema,
+bytes)` takes a file in memory. `build/saft-xsd <xsd> <file>...` (`make programs`) prints each file's
+first errors and `errors N`, and exits 1 when one is invalid. The schema adds nothing about control
+totals or signatures: those are `saftCheck` and `saftVerifyChains`.
+
 ## Verified, with results
 
 `make all`, run on 2026-10-31. CI runs the same checks on every push:
 
 | Check | Result |
 |---|---|
-| Unit, golden and property tests (`make test`) | 7 programs, 137,303 checks, 0 failed |
+| Unit, golden and property tests (`make test`) | 7 programs, 137,303 checks, 0 failed (2026-10-31; the schema corpus below added an eighth) |
 | The streaming writer against `saftWrite`, the 25 golden files and 200 generated ones | byte-identical |
 | The streaming reader against `saftRead`, `saftCheck` and `saftVerifyChains`, on the same files and on broken and tampered ones, with an openssl-made key | the same issues and chain reports |
-| 25 golden files and 200 generated ones through the **official XSD** with [xmlschema](https://github.com/sissaschool/xmlschema), an XSD 1.1 processor | 225 valid, 0 errors |
-| The same 225 through `xmllint`, on a copy of the XSD with what XSD 1.0 can't express removed (below) | 0 errors |
-| 26 deliberately invalid files through the official XSD, and `saftCheck` | all rejected by both |
+| 25 golden files and 200 generated ones through the **official XSD 1.1**, with abla-xml's validator (`build/saft-xsd`, 2026-11-02) | 225 valid, 0 errors |
+| 130 files with one change each (`tests/xsd_test.ab`): wrong types, missing, extra and misordered elements, broken patterns, enumerations, bounds, assertions and keys, against the verdicts of [xmlschema](https://github.com/sissaschool/xmlschema) 4.1.0, an independent XSD 1.1 processor | the same verdict for all 130 (103 invalid), and xmlschema's first error at the same element and line for all the invalid ones but one: `xsi:type`, which this validator refuses as unsupported |
+| The 279 golden, generated, invalid and AT demonstration files through both validators side by side (2026-11-02) | the same verdict and first error for every one |
+| 26 deliberately invalid files through the official XSD, and `saftCheck` | all rejected by both (by xmlschema too) |
 | Control totals of those files, recomputed in Python | 0 differences |
 | 22 signatures with a throwaway key: messages rebuilt from the XML in Python, `openssl dgst -sha1 -verify` | all verified, byte-identical to openssl's own, all rejected once tampered with |
 | Chain breaks (changed amount, replaced Hash, removed document, wrong series, restarts) | caught, by unit tests with an openssl-made key |
@@ -210,14 +231,16 @@ saftProcessedByText(invoice.hash, 1234)    // "AxAx-Processado por programa cert
 | 119,991 decimal operations against Python's `decimal` | 0 differences |
 | AT's own demonstration file through the official XSD, reader, check and writer | 0 XSD errors, 0 check errors, control totals agree, 3,726 elements rewritten with 0 differences; the streams give the same bytes and verdict |
 | A file of 3,317,751,574 bytes (3.09 GiB, 540,000 documents), `make big`, local only and not in CI | written with a peak of 186 MB in 89 s; read with every check at 288 MB in 292 s; read and written again at 268 MB in 345 s, byte-identical.At 127 MB the same programs peak at 185 MB and 268 MB |
-| That file's validity | `xmllint --stream` on the XSD 1.0 copy: valid, the whole file. Control totals recomputed in Python over the whole file: 0 differences. The official XSD through xmlschema: 0 errors, on a 1% sample (5,400 documents with the header and master files), not the whole file: xmlschema's lazy mode raises KeyError on this schema's identity constraints, and does about 1 MB/s |
+| That file's validity (2026-10-31) | `xmllint --stream` on a copy of the XSD reduced to 1.0: valid, the whole file. Control totals recomputed in Python over the whole file: 0 differences. The official XSD through xmlschema: 0 errors, on a 1% sample. `make big` now validates the whole file against the official XSD with `build/saft-xsd` instead; not run at 3 GiB since |
+| The official XSD 1.1 on a whole 1,107,940,980-byte file (180,000 documents) with `build/saft-xsd` (2026-11-02) | valid, in 75 s with a peak of 174 MiB |
 | The same run with one wrong control total | refused at the end of its section |
 
 **xmllint can't load the official schema.** It declares `vc:minVersion="1.1"` and has 19
-`xs:assert` and an `xs:all` with repeating elements, which libxml2 doesn't support. So the
-official file goes through xmlschema untouched, and `tools/derive-xsd10.py` makes the copy for
-xmllint. That copy loses the assertions, which xmlschema still checks. Any other program's
-"validated with xmllint" against this schema isn't possible without a similar change.
+`xs:assert` and an `xs:all` with repeating elements, which libxml2 doesn't support. Any other
+program's "validated with xmllint" against this schema isn't possible without removing them.
+[abla-xml](https://github.com/AndreBaltazar8/abla-xml)'s validator implements what the schema
+uses, assertions included, and validates the official file untouched, streaming; see
+[The official XSD](#the-official-xsd).
 
 The schema and texts aren't in this repository: `make sources` downloads them and checks
 their hashes. SOURCES.md says why.
@@ -266,7 +289,11 @@ Each of these was decided here for lack of a text that says so, and could be wro
 
 ## Tests
 
-`make test` is the unit, golden and property tests. `make big` is local only. `make files`, `make signatures` and
+`make test` is the unit, golden and property tests, and the schema corpus: it needs `make sources`
+first, since the XSD isn't in this repository. The corpus (`tests/xsd/mutations.txt`) is one change
+each to a valid file; `tests/xsd/expected.txt` is what xmlschema says of each, recorded by
+`make xsd-expected` (Python with xmlschema and lxml, from Nix) and compared with on every run. `make big`
+is local only. `make files`, `make signatures` and
 `make at-demo` run the external checks above, taking their tools from Nix. A signing test
 makes its key with openssl when it runs and removes it: no private key is in this repository,
 and the golden files' Hash values come from a fake signer that no RSA key could verify.

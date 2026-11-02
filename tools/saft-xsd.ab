@@ -1,0 +1,44 @@
+// Validates SAF-T files against the official XSD 1.1, streaming, with abla-xml's validator.
+//   saft-xsd <saftpt1.04_01.xsd> <file.xml>...   [SAFT_XSD_SHOWN=n errors shown per file, 8]
+// For each file, its first errors as "message at path (line n)", then "errors N". Exits 1 when
+// any file is invalid, and 2 when the schema doesn't load or isn't the official one.
+import "../src/xsd/entry.ab"
+import "abla/fs"
+import "abla/io"
+import "abla/process"
+
+fun shownErrors(): int {
+    val text = processEnvironment("SAFT_XSD_SHOWN") ?? ""
+    var value = 0
+    for (c in text) if (c >= 48 && c <= 57) value = value * 10 + (c - 48)
+    if (text.size == 0) 8 else value
+}
+
+fun main: int {
+    if (processArgumentCount() < 2) {
+        eprintln("usage: saft-xsd <saftpt1.04_01.xsd> <file.xml>...")
+        return 2
+    }
+    val loaded = saftXsdLoad(path(processArgument(0)).readText())
+    val schema = loaded.schema
+    if (schema == null) {
+        eprintln("the schema doesn't load: ${loaded.error}")
+        return 2
+    }
+    if (!loaded.official) {
+        eprintln("${processArgument(0)} isn't the official saftpt1.04_01.xsd (sha256 $saftXsdSha256)")
+        return 2
+    }
+    val shown = shownErrors()
+    var invalid = 0
+    var i = 1
+    while (i < processArgumentCount()) {
+        val file = processArgument(i)
+        val v = saftXsdValidateFile(schema, path(file), shown)
+        for (e in v.errors) println("${e.message} at ${e.path} (line ${e.elementLine})")
+        if (processArgumentCount() > 2) println("$file: errors ${v.errorCount}") else println("errors ${v.errorCount}")
+        if (!v.valid) invalid = invalid + 1
+        i = i + 1
+    }
+    if (invalid > 0) 1 else 0
+}

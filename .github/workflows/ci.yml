@@ -18,18 +18,18 @@ jobs:
       - uses: AndreBaltazar8/setup-abla@b21e1290aa49862e7bf187dc84b6b3511f4b571e # v1.0.0
         with:
           version: '0.2.29'
-      - name: Unit, golden and property tests
+      - name: Download AT's schema, demonstration file and texts, by hash
+        run: tools/fetch-sources.sh
+      - name: Unit, golden, property and schema-corpus tests
         run: make test-in-shell COMPILER=ablac
       - name: Build tools and the example
         run: make programs-in-shell COMPILER=ablac
-      - name: Download AT's schema, demonstration file and texts, by hash
-        run: tools/fetch-sources.sh
-      - name: Generated files through the official XSD and xmllint, decimals against Python
+      - name: Generated files through the official XSD, decimals against Python
         run: |
-          nix-shell -p libxml2 'python3.withPackages(p: [p.xmlschema])' --run 'tools/check-all.sh 200'
+          nix-shell -p python3 --run 'tools/check-all.sh 200'
       - name: Signatures against openssl, QR images through zbar
         run: |
-          nix-shell -p openssl zbar 'python3.withPackages(p: [p.xmlschema])' --run tools/check-signatures.sh
+          nix-shell -p openssl zbar python3 --run tools/check-signatures.sh
       - name: AT's demonstration file through the XSD, reader and writer
         run: |
-          nix-shell -p libxml2 'python3.withPackages(p: [p.xmlschema])' --run tools/check-at-demo.sh
+          nix-shell -p python3 --run tools/check-at-demo.sh

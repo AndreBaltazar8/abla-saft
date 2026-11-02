@@ -1,23 +1,11 @@
 #!/usr/bin/env python3
-"""compare-at-demo.py official.xsd original.xml rewritten.xml"""
+"""compare-at-demo.py original.xml rewritten.xml: the same content, element by element. Both
+files pass the official XSD first, through build/saft-xsd (tools/check-at-demo.sh)."""
 import sys
 import xml.etree.ElementTree as ET
 from decimal import Decimal, InvalidOperation
 
-import xmlschema
-
-official, original, rewritten = sys.argv[1:4]
-schema = xmlschema.XMLSchema11(official)
-errors = list(schema.iter_errors(original))
-print(f"original through the official XSD: {len(errors)} errors")
-if errors:
-    print(errors[0].reason, errors[0].path)
-    sys.exit(1)
-errors = list(schema.iter_errors(rewritten))
-print(f"rewritten through the official XSD: {len(errors)} errors")
-if errors:
-    print(errors[0].reason, errors[0].path)
-    sys.exit(1)
+original, rewritten = sys.argv[1:3]
 N = "{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}"
 
 

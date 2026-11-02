@@ -1,0 +1,90 @@
+import "../src/xsd/entry.ab"
+import "abla/test"
+import "abla/fs"
+import "abla/io"
+import "abla/text"
+import "abla/process"
+
+// The official XSD, through abla-xml's validator, on a corpus of files with one change each
+// (tests/xsd/mutations.txt): its verdicts and the place of each first error must be those
+// another XSD 1.1 validator gave (tests/xsd/expected.txt, from tools/xsd-expected.py). Needs
+// `make sources`. XSD_SHOW=1 prints every verdict.
+
+class Expected(val verdict: string, val path: string, val line: string)
+
+fun unescape(text: string): string = text.replace("\\n", "\n")
+
+// The text with its `nth` occurrence of `find` replaced, or "" when there is no such occurrence.
+fun mutate(data: string, nth: int, find: string, replace: string): string {
+    var at = -1
+    var i = 0
+    while (i < nth) {
+        at = data.indexOf(find, at + 1)
+        if (at < 0) return ""
+        i = i + 1
+    }
+    data.slice(0, at) + replace + data.slice(at + find.size, data.size)
+}
+
+fun number(text: string): int {
+    var value = 0
+    for (c in text) if (c >= 48 && c <= 57) value = value * 10 + (c - 48)
+    value
+}
+
+fun main: int {
+    val xsd = path(".sources/saftpt1.04_01.xsd")
+    if (!xsd.exists()) {
+        expect(false, "the official XSD is in .sources: run make sources")
+        return testsPassed()
+    }
+    val loaded = saftXsdLoad(xsd.readText())
+    val schema = loaded.schema
+    if (schema == null) {
+        expect(false, "the official XSD loads: ${loaded.error}")
+        return testsPassed()
+    }
+    expect(loaded.official, "it is the official file, by its SHA-256")
+    val show = processEnvironment("XSD_SHOW") == "1"
+    val expected: Map<string, Expected> = Map()
+    for (row in path("tests/xsd/expected.txt").readText().split("\n")) {
+        if (row.size == 0 || row.startsWith("#")) continue
+        val fields = row.split("\t")
+        expected.set(fields[0], Expected(fields[1], fields[2], fields[3]))
+    }
+    var count = 0
+    for (row in path("tests/xsd/mutations.txt").readText().split("\n")) {
+        if (row.size == 0 || row.startsWith("#")) continue
+        val fields = row.split("\t")
+        val name = fields[0]
+        val data = mutate(path(fields[1]).readText(), number(fields[2]), unescape(fields[3]), unescape(fields[4]))
+        if (!expect(data.size > 0, "$name: the text is in ${fields[1]}")) continue
+        count = count + 1
+        val result = saftXsdValidate(schema, data)
+        val verdict = if (result.valid) "valid" else "invalid"
+        val first = if (result.errors.size > 0) "${result.errors[0].path} ${result.errors[0].elementLine} (${result.errors[0].line}) ${result.errors[0].code}: ${result.errors[0].message}" else ""
+        if (show) println("$name\t$verdict\t$first")
+        val wanted = expected.get(name)
+        if (wanted == null) {
+            expect(false, "$name has an expected verdict")
+            continue
+        }
+        expectEqual(verdict, wanted.verdict, "$name: the verdict ($first)")
+        if (result.valid || wanted.verdict != "invalid") continue
+        // xsi:type isn't supported here: it is refused on the element that has it, where the other
+        // validator reports the type it names against its parent's content.
+        if (name == "extra-xsi-type") {
+            expect(result.errors.size > 0 && result.errors[0].code == "unsupported", "$name: refused as unsupported")
+            continue
+        }
+        if (wanted.path == "-") {
+            expect(result.xmlError != null, "$name: not well-formed, as the other validator said")
+            continue
+        }
+        var placed = false
+        for (e in result.errors) if (e.path == wanted.path && "${e.elementLine}" == wanted.line) placed = true
+        expect(placed, "$name: an error at ${wanted.path}, line ${wanted.line}; the first is at $first")
+    }
+    expect(count >= 100, "the corpus has at least 100 files ($count)")
+    testsPassed()
+}

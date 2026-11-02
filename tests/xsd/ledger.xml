@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Accounting tables (2.1 and 3) the library doesn't write, for the schema's assertions on
+     accounts and its xs:all of debit and credit lines. Made up for the tests. -->
+<AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:PT_1.04_01">
+  <Header>
+    <AuditFileVersion>1.04_01</AuditFileVersion>
+    <CompanyID>599999993</CompanyID>
+    <TaxRegistrationNumber>599999993</TaxRegistrationNumber>
+    <TaxAccountingBasis>C</TaxAccountingBasis>
+    <CompanyName>Exemplo Contabilidade, Lda.</CompanyName>
+    <CompanyAddress>
+      <AddressDetail>Rua das Flores, 12</AddressDetail>
+      <City>Coimbra</City>
+      <PostalCode>3000-123</PostalCode>
+      <Country>PT</Country>
+    </CompanyAddress>
+    <FiscalYear>2026</FiscalYear>
+    <StartDate>2026-01-01</StartDate>
+    <EndDate>2026-12-31</EndDate>
+    <CurrencyCode>EUR</CurrencyCode>
+    <DateCreated>2026-12-31</DateCreated>
+    <TaxEntity>Global</TaxEntity>
+    <ProductCompanyTaxID>599999993</ProductCompanyTaxID>
+    <SoftwareCertificateNumber>0</SoftwareCertificateNumber>
+    <ProductID>abla-saft tests/Exemplo</ProductID>
+    <ProductVersion>0.1.0</ProductVersion>
+  </Header>
+  <MasterFiles>
+    <GeneralLedgerAccounts>
+      <TaxonomyReference>S</TaxonomyReference>
+      <Account>
+        <AccountID>11</AccountID>
+        <AccountDescription>Caixa</AccountDescription>
+        <OpeningDebitBalance>100.00</OpeningDebitBalance>
+        <OpeningCreditBalance>0.00</OpeningCreditBalance>
+        <ClosingDebitBalance>150.00</ClosingDebitBalance>
+        <ClosingCreditBalance>0.00</ClosingCreditBalance>
+        <GroupingCategory>GR</GroupingCategory>
+      </Account>
+      <Account>
+        <AccountID>111</AccountID>
+        <AccountDescription>Caixa A</AccountDescription>
+        <OpeningDebitBalance>100.00</OpeningDebitBalance>
+        <OpeningCreditBalance>0.00</OpeningCreditBalance>
+        <ClosingDebitBalance>150.00</ClosingDebitBalance>
+        <ClosingCreditBalance>0.00</ClosingCreditBalance>
+        <GroupingCategory>GM</GroupingCategory>
+        <GroupingCode>11</GroupingCode>
+        <TaxonomyCode>1</TaxonomyCode>
+      </Account>
+      <Account>
+        <AccountID>71</AccountID>
+        <AccountDescription>Vendas</AccountDescription>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <OpeningCreditBalance>0.00</OpeningCreditBalance>
+        <ClosingDebitBalance>0.00</ClosingDebitBalance>
+        <ClosingCreditBalance>50.00</ClosingCreditBalance>
+        <GroupingCategory>GR</GroupingCategory>
+      </Account>
+      <Account>
+        <AccountID>711</AccountID>
+        <AccountDescription>Vendas de mercadorias</AccountDescription>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <OpeningCreditBalance>0.00</OpeningCreditBalance>
+        <ClosingDebitBalance>0.00</ClosingDebitBalance>
+        <ClosingCreditBalance>50.00</ClosingCreditBalance>
+        <GroupingCategory>GM</GroupingCategory>
+        <GroupingCode>71</GroupingCode>
+        <TaxonomyCode>499</TaxonomyCode>
+      </Account>
+    </GeneralLedgerAccounts>
+    <Customer>
+      <CustomerID>C1</CustomerID>
+      <AccountID>111</AccountID>
+      <CustomerTaxID>500000000</CustomerTaxID>
+      <CompanyName>Cliente, S.A.</CompanyName>
+      <BillingAddress>
+        <AddressDetail>Rua Direita, 1</AddressDetail>
+        <City>Lisboa</City>
+        <PostalCode>1000-001</PostalCode>
+        <Country>PT</Country>
+      </BillingAddress>
+      <SelfBillingIndicator>0</SelfBillingIndicator>
+    </Customer>
+  </MasterFiles>
+  <GeneralLedgerEntries>
+    <NumberOfEntries>2</NumberOfEntries>
+    <TotalDebit>70.00</TotalDebit>
+    <TotalCredit>70.00</TotalCredit>
+    <Journal>
+      <JournalID>V</JournalID>
+      <Description>Vendas</Description>
+      <Transaction>
+        <TransactionID>2026-03-14 V 1</TransactionID>
+        <Period>3</Period>
+        <TransactionDate>2026-03-14</TransactionDate>
+        <SourceID>ana</SourceID>
+        <Description>Venda a dinheiro</Description>
+        <DocArchivalNumber>V-1</DocArchivalNumber>
+        <TransactionType>N</TransactionType>
+        <GLPostingDate>2026-03-14</GLPostingDate>
+        <CustomerID>C1</CustomerID>
+        <Lines>
+          <CreditLine>
+            <RecordID>1</RecordID>
+            <AccountID>711</AccountID>
+            <SystemEntryDate>2026-03-14T10:20:30</SystemEntryDate>
+            <Description>Venda</Description>
+            <CreditAmount>50.00</CreditAmount>
+          </CreditLine>
+          <DebitLine>
+            <RecordID>2</RecordID>
+            <AccountID>111</AccountID>
+            <SourceDocumentID>FT A/1</SourceDocumentID>
+            <SystemEntryDate>2026-03-14T10:20:30</SystemEntryDate>
+            <Description>Recebimento</Description>
+            <DebitAmount>30.00</DebitAmount>
+          </DebitLine>
+          <DebitLine>
+            <RecordID>3</RecordID>
+            <AccountID>111</AccountID>
+            <SystemEntryDate>2026-03-14T10:20:30</SystemEntryDate>
+            <Description>Recebimento</Description>
+            <DebitAmount>20.00</DebitAmount>
+          </DebitLine>
+        </Lines>
+      </Transaction>
+      <Transaction>
+        <TransactionID>2026-03-15 V 2</TransactionID>
+        <Period>13</Period>
+        <TransactionDate>2026-03-15</TransactionDate>
+        <SourceID>ana</SourceID>
+        <Description>Regularização</Description>
+        <DocArchivalNumber>V-2</DocArchivalNumber>
+        <TransactionType>R</TransactionType>
+        <GLPostingDate>2026-03-15</GLPostingDate>
+        <Lines>
+          <DebitLine>
+            <RecordID>4</RecordID>
+            <AccountID>711</AccountID>
+            <SystemEntryDate>2026-03-15T09:00:00</SystemEntryDate>
+            <Description>Regularização</Description>
+            <DebitAmount>20.00</DebitAmount>
+          </DebitLine>
+          <CreditLine>
+            <RecordID>5</RecordID>
+            <AccountID>111</AccountID>
+            <SystemEntryDate>2026-03-15T09:00:00</SystemEntryDate>
+            <Description>Regularização</Description>
+            <CreditAmount>20.00</CreditAmount>
+          </CreditLine>
+        </Lines>
+      </Transaction>
+    </Journal>
+  </GeneralLedgerEntries>
+</AuditFile>

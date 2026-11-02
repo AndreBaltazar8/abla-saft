@@ -1,0 +1,131 @@
+# xmlschema 4.1.0 on .sources/saftpt1.04_01.xsd: name, verdict, path, line, reason
+same-ft	valid	-	-	-
+same-ledger	valid	-	-	-
+same-demo	valid	-	-	-
+type-decimal-comma	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/UnitPrice	198	invalid value '10,50' for xs:decimal
+type-decimal-exponent	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/Quantity	196	invalid value '2e0' for xs:decimal
+type-decimal-empty	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/UnitPrice	198	invalid value '' for xs:decimal
+type-decimal-spaces	valid	-	-	-
+type-decimal-plus-point	valid	-	-	-
+type-decimal-leading-point	valid	-	-	-
+type-decimal-sign-only	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/Quantity	196	invalid value '-' for xs:decimal
+type-date-february-30	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/InvoiceDate	182	day is out of range for month
+type-date-leap-day	valid	-	-	-
+type-date-not-leap	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/InvoiceDate	182	day is out of range for month
+type-date-zone	valid	-	-	-
+type-date-bad-zone	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/InvoiceDate	182	Invalid datetime string '2026-03-14+15:00' for <class 'elementpath.datatypes.datetime.Date'>
+type-date-short-year	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/InvoiceDate	182	Invalid datetime string '226-03-14' for <class 'elementpath.datatypes.datetime.Date'>
+type-datetime-space	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/SystemEntryDate	190	Invalid datetime string '2026-03-14 10:20:30' for <class 'elementpath.datatypes.datetime.DateTime'>
+type-datetime-no-seconds	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/SystemEntryDate	190	Invalid datetime string '2026-03-14T10:20' for <class 'elementpath.datatypes.datetime.DateTime'>
+type-datetime-fraction	valid	-	-	-
+type-datetime-24	valid	-	-	-
+type-datetime-24-01	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/SystemEntryDate	190	hour must be in 0..23
+type-datetime-minute-60	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/SystemEntryDate	190	minute must be in 0..59
+type-integer-point	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/LineNumber	193	invalid literal for int() with base 10: '1.0'
+type-integer-negative	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/LineNumber	193	value must be non negative
+type-integer-plus	valid	-	-	-
+type-nif-short	invalid	/AuditFile/Header/TaxRegistrationNumber	6	value has to be greater or equal than 100000000
+type-nif-leading-zeros	valid	-	-	-
+type-indicator-2	invalid	/AuditFile/MasterFiles/Customer/SelfBillingIndicator	73	value has to be less than or equal than 1
+type-cdata	valid	-	-	-
+type-reference	valid	-	-	-
+total-negative	invalid	/AuditFile/SourceDocuments/SalesInvoices/TotalCredit	170	value has to be greater or equal than Decimal('0.00')
+total-not-a-number	invalid	/AuditFile/SourceDocuments/SalesInvoices/TotalDebit	169	invalid value '0.0.0' for xs:decimal
+total-entries-negative	invalid	/AuditFile/SourceDocuments/SalesInvoices/NumberOfEntries	168	value must be non negative
+total-entries-wrong	valid	-	-	-
+total-gross-wrong	valid	-	-	-
+total-amount-negative	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/CreditAmount	201	value has to be greater or equal than Decimal('0.00')
+total-negative-zero	valid	-	-	-
+missing-atcud	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice	171	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}DocumentStatus' at position 2. Tag 'ns:ATCUD' expected.
+missing-tax-payable	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/DocumentTotals	226	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}NetTotal' at position 1. Tag 'ns:TaxPayable' expected.
+missing-customer	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice	171	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}Line' at position 11. Tag 'ns:CustomerID' expected.
+missing-last	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/DocumentTotals	226	The content of element '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}DocumentTotals' is not complete. Tag 'ns:GrossTotal' expected.
+missing-header	invalid	/AuditFile/Header	3	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}CompanyID' at position 1. Tag 'ns:AuditFileVersion' expected.
+missing-tax	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line	209	The content of element '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}Line' is not complete. Tag 'ns:Tax' expected.
+missing-movement-start	invalid	/AuditFile/SourceDocuments/MovementOfGoods/StockMovement	170	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}Line' at position 13. Tag 'ns:MovementStartTime' expected.
+pattern-invoice-no	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/InvoiceNo	172	value doesn't match any pattern of ['[^ ]+ [^/^ ]+/[0-9]+']
+pattern-invoice-no-caret	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/InvoiceNo	172	value doesn't match any pattern of ['[^ ]+ [^/^ ]+/[0-9]+']
+pattern-hash-control	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/HashControl	181	value doesn't match any pattern of ['[0-9]+|[0-9]+[\\.][0-9]+|[0-9]+-[A-Z]{2}(M )([^/^ ]+[/][0-9]+)|[0-9]+-[A-Z]{2}(D )([^ ]+ [^/^ ]+[/][0-9]+)']
+pattern-hash-control-manual	valid	-	-	-
+pattern-country	invalid	/AuditFile/Header/CompanyAddress/Country	17	value doesn't match any pattern of ['AD|AE|AF|AG|AI|AL|AM|AO|AQ|AR|AS|AT|AU|AW|AX|AZ|BA|BB|BD|BE|BF|BG|BH|BI|BJ|BL|BM|BN|BO|BQ|BR|BS|BT|BV|BW|BY|BZ|CA|CC|CD|CF|
+pattern-country-lower	invalid	/AuditFile/Header/CompanyAddress/Country	17	value doesn't match any pattern of ['AD|AE|AF|AG|AI|AL|AM|AO|AQ|AR|AS|AT|AU|AW|AX|AZ|BA|BB|BD|BE|BF|BG|BH|BI|BJ|BL|BM|BN|BO|BQ|BR|BS|BT|BV|BW|BY|BZ|CA|CC|CD|CF|
+pattern-customer-country-unknown	invalid	/AuditFile/MasterFiles/Customer/BillingAddress/Country	41	value doesn't match any pattern of ['AD|AE|AF|AG|AI|AL|AM|AO|AQ|AR|AS|AT|AU|AW|AX|AZ|BA|BB|BD|BE|BF|BG|BH|BI|BJ|BL|BM|BN|BO|BQ|BR|BS|BT|BV|BW|BY|BZ|CA|CC|CD|CF|
+pattern-version	invalid	/AuditFile/Header/AuditFileVersion	4	value doesn't match any pattern of ['1\\.04_01']
+pattern-region	invalid	/AuditFile/MasterFiles/TaxTable/TaxTableEntry/TaxCountryRegion	138	value doesn't match any pattern of ['AD|AE|AF|AG|AI|AL|AM|AO|AQ|AR|AS|AT|AU|AW|AX|AZ|BA|BB|BD|BE|BF|BG|BH|BI|BJ|BL|BM|BN|BO|BQ|BR|BS|BT|BV|BW|BY|BZ|CA|CC|CD|CF|
+pattern-tax-code	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/Tax/TaxCode	205	value doesn't match any pattern of ['RED|INT|NOR|ISE|OUT|([a-zA-Z0-9\\.])*|NS']
+pattern-tax-code-long	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/Tax/TaxCode	205	value length cannot be greater than 10
+pattern-exemption-code	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/TaxExemptionCode	209	value doesn't match any pattern of ['(M[0-9]{2})+']
+pattern-exemption-code-twice	valid	-	-	-
+pattern-document-number	invalid	/AuditFile/SourceDocuments/WorkingDocuments/WorkDocument/DocumentNumber	172	value doesn't match any pattern of ['[^ ]+ [^/^ ]+/[0-9]+']
+pattern-product-id	invalid	/AuditFile/Header/ProductID	27	value doesn't match any pattern of ['[^/]+/[^/]+']
+pattern-cn-code	invalid	/AuditFile/MasterFiles/Product/CustomsDetails/CNCode	97	value doesn't match any pattern of ['[0-9]{8}']
+pattern-transaction-id	invalid	/AuditFile/GeneralLedgerEntries/Journal/Transaction/TransactionID	94	value doesn't match any pattern of ['[1-9][0-9]{3}-[01][0-9]-[0-3][0-9] [^ ]{1,30} [^ ]{1,20}']
+pattern-company-id	invalid	/AuditFile/Header/CompanyID	7	value doesn't match any pattern of ['([0-9]{9})+|([^^]+ [0-9/]+)']
+enum-invoice-type	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/InvoiceType	183	value must be one of ['FT', 'FS', 'FR', 'ND', 'NC', 'VD', 'TV', 'TD', 'AA', 'DA', 'RP', 'RE', 'CS', 'LD', 'RA']
+enum-invoice-type-space	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/InvoiceType	183	value must be one of ['FT', 'FS', 'FR', 'ND', 'NC', 'VD', 'TV', 'TD', 'AA', 'DA', 'RP', 'RE', 'CS', 'LD', 'RA']
+enum-currency	invalid	/AuditFile/Header/CurrencyCode	22	value must be one of ['EUR']
+enum-work-type	invalid	/AuditFile/SourceDocuments/WorkingDocuments/WorkDocument/WorkType	183	value must be one of ['CM', 'CC', 'FC', 'FO', 'NE', 'OU', 'OR', 'PF', 'DC', 'RP', 'RE', 'CS', 'LD', 'RA']
+enum-movement-type	invalid	/AuditFile/SourceDocuments/MovementOfGoods/StockMovement/MovementType	182	value must be one of ['GR', 'GT', 'GA', 'GC', 'GD']
+enum-payment-type	invalid	/AuditFile/SourceDocuments/Payments/Payment	171	assertion test is false
+enum-taxonomy-reference	invalid	/AuditFile/MasterFiles/GeneralLedgerAccounts/TaxonomyReference	37	value must be one of ['S', 'M', 'N', 'O']
+length-source-id	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/DocumentStatus/SourceID	177	value length cannot be greater than 30
+length-product-description	invalid	/AuditFile/MasterFiles/Product/ProductCode	102	value length cannot be lesser than 1
+length-unit-empty	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line/UnitOfMeasure	197	value length cannot be lesser than 1
+length-eac-code	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/EACCode	190	length has to be 5
+range-fiscal-year	invalid	/AuditFile/Header/FiscalYear	19	value has to be greater or equal than 2000
+range-start-date	invalid	/AuditFile/Header/StartDate	20	value has to be greater or equal than Date(2000, 1, 1)
+range-period	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Period	182	value has to be less than or equal than 12
+range-accounting-period	invalid	/AuditFile/GeneralLedgerEntries/Journal/Transaction/Period	130	value has to be less than or equal than 16
+range-taxonomy-code	invalid	/AuditFile/MasterFiles/GeneralLedgerAccounts/Account/TaxonomyCode	69	value has to be less than or equal than 999
+order-date-type	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice	171	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}InvoiceType' at position 6. Tag 'ns:InvoiceDate' expected.
+order-totals	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/DocumentTotals	226	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}NetTotal' at position 1. Tag 'ns:TaxPayable' expected.
+order-master-files	invalid	/AuditFile/MasterFiles	31	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}Supplier' at position 5.
+order-ledger-lines	valid	-	-	-
+extra-element	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice	171	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}Extra' at position 3. Tag 'ns:DocumentStatus' expected.
+extra-second-hash	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice	171	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}HashControl' at position 6. Tag 'ns:InvoiceDate' expected.
+extra-after-end	invalid	/AuditFile	2	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}SourceDocuments' at position 4.
+extra-in-simple	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/InvoiceType	183	a simple content element can't have child elements
+extra-text	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/SpecialRegimes	184	character data between child elements not allowed
+extra-attribute	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice	171	'id' attribute not allowed for element
+extra-xsi-type	invalid	/AuditFile/SourceDocuments/SalesInvoices	167	Xsd11ComplexType(name='ns:Tax') cannot substitute Xsd11ComplexType(content='element-only', attributes=[])
+extra-schema-location	valid	-	-	-
+extra-comment	valid	-	-	-
+extra-choice-both	invalid	/AuditFile/SourceDocuments/MovementOfGoods/StockMovement	170	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}SupplierID' at position 10. Tag 'ns:SourceID' expected.
+extra-ledger-choice-both	invalid	/AuditFile/GeneralLedgerEntries/Journal/Transaction	93	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}SupplierID' at position 10. Tag 'ns:Lines' expected.
+namespace-root	invalid	/AuditFile	2	'{urn:OECD:StandardAuditFile-Tax:PT_1.04}AuditFile' is not an element of the schema
+namespace-child	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice	171	Unexpected child with tag 'InvoiceType' at position 7. Tag 'ns:InvoiceType' expected.
+namespace-prefixed	valid	-	-	-
+identity-customer-unknown	invalid	/AuditFile	2	value ('C9',) not found for Xsd11Unique(name='ns:CustomerIDConstraint')
+identity-product-unknown	invalid	/AuditFile	2	value ('P9',) not found for Xsd11Unique(name='ns:ProductCodeConstraint')
+identity-customer-twice	invalid	/AuditFile/MasterFiles/Customer	62	duplicated value ('C1',) for Xsd11Unique(name='ns:CustomerIDConstraint')
+identity-customer-spaces	invalid	/AuditFile	2	value ('C1 ',) not found for Xsd11Unique(name='ns:CustomerIDConstraint')
+identity-movement-supplier	invalid	/AuditFile	2	value ('S9',) not found for Xsd11Unique(name='ns:SupplierIDConstraint')
+identity-receipt-customer	invalid	/AuditFile	2	value ('C7',) not found for Xsd11Unique(name='ns:CustomerIDConstraint')
+identity-ledger-account	invalid	/AuditFile	4	value ('799',) not found for Xsd11Unique(name='ns:AccountIDConstraint')
+identity-ledger-grouping	invalid	/AuditFile	4	value ('12',) not found for Xsd11Unique(name='ns:AccountIDConstraint')
+identity-ledger-transaction-twice	invalid	/AuditFile/GeneralLedgerEntries/Journal/Transaction	128	duplicated value ('2026-03-14 V 1',) for Xsd11Unique(name='ns:GeneralLedgerEntriesTransactionIdConstraint')
+identity-ledger-account-twice	invalid	/AuditFile/MasterFiles/GeneralLedgerAccounts/Account	51	duplicated value ('11',) for Xsd11Unique(name='ns:AccountIDConstraint')
+identity-ledger-customer	invalid	/AuditFile	4	value ('C9',) not found for Xsd11Unique(name='ns:CustomerIDConstraint')
+assert-percentage-zero	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line	192	assertion test is false
+assert-percentage-zero-decimal	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line	192	assertion test is false
+assert-reason-without-code	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line	192	assertion test is false
+assert-code-without-reason	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line	192	assertion test is false
+assert-exempt-reason-removed	invalid	-	208	not well-formed
+assert-tax-base-with-price	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line	192	assertion test is false
+assert-tax-base-with-amount	invalid	/AuditFile/SourceDocuments/SalesInvoices/Invoice/Line	192	assertion test is false
+assert-tax-amount-zero	valid	-	-	-
+assert-tax-amount	valid	-	-	-
+assert-movement-zero	invalid	/AuditFile/SourceDocuments/MovementOfGoods/StockMovement/Line	211	assertion test is false
+assert-work-zero	invalid	/AuditFile/SourceDocuments/WorkingDocuments/WorkDocument/Line	187	assertion test is false
+assert-receipt-zero	invalid	/AuditFile/SourceDocuments/Payments/Payment/Line	190	assertion test is false
+assert-receipt-rc-no-tax	invalid	/AuditFile/SourceDocuments/Payments/Payment	171	assertion test is false
+assert-receipt-rg-no-tax	valid	-	-	-
+assert-receipt-rc-second-line	valid	-	-	-
+assert-account-gm-no-taxonomy	invalid	/AuditFile/MasterFiles/GeneralLedgerAccounts/Account	40	assertion test is false
+assert-account-gr-taxonomy	invalid	/AuditFile/MasterFiles/GeneralLedgerAccounts/Account	31	assertion test is false
+assert-account-gr-grouping	invalid	/AuditFile/MasterFiles/GeneralLedgerAccounts/Account	31	assertion test is false
+assert-account-gm-no-grouping	invalid	/AuditFile/MasterFiles/GeneralLedgerAccounts/Account	40	assertion test is false
+assert-account-ga	invalid	/AuditFile/MasterFiles/GeneralLedgerAccounts/Account	40	assertion test is false
+assert-demo-account	invalid	/AuditFile/MasterFiles/GeneralLedgerAccounts/Account	48	assertion test is false
+all-no-credit	invalid	/AuditFile/GeneralLedgerEntries/Journal/Transaction/Lines	137	The content of element '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}Lines' is not complete. Tag 'ns:CreditLine' expected.
+all-unknown	invalid	/AuditFile/GeneralLedgerEntries/Journal/Transaction/Lines	103	Unexpected child with tag '{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}OtherLine' at position 1. Tag ('ns:DebitLine' | 'ns:CreditLine') expected.

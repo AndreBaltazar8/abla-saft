@@ -1,0 +1,30 @@
+// The official SAF-T (PT) schema through abla-xml's XML Schema validator:
+// `import github("AndreBaltazar8/abla-saft/xsd")`. The schema needs XSD 1.1 (19 assertions and a
+// repeating xs:all), which this validator implements. Its file isn't shipped here (SOURCES.md):
+// `make sources` fetches it by hash, and the caller gives its bytes.
+import github("AndreBaltazar8/abla-xml/xsd")
+import "abla/crypto"
+import "abla/fs"
+
+// The SHA-256 of saftpt1.04_01.xsd, as tools/sources.txt fetches it.
+val saftXsdSha256 = "292c0ab4611e3f5a0cdf2abb4e62d9bd41254dc2e76a1fae4d35a8b132d79350"
+
+// A loaded schema; `official` when its bytes are those of saftpt1.04_01.xsd.
+class SaftXsd(val schema: XsdSchema?, val official: bool, val error: string)
+
+fun saftXsdLoad(xsd: string): SaftXsd {
+    val loaded = xsdLoad(xsd)
+    SaftXsd(loaded.schema, hexEncode(sha256(xsd)) == saftXsdSha256, loaded.error)
+}
+
+// What a SAF-T file may hold: as big as a file goes, read a piece at a time.
+fun saftXsdOptions(maxErrors: int = 100): XsdOptions =
+    XsdOptions(XmlOptions(maxBytes = 1099511627776, maxNodes = 1099511627776), maxErrors)
+
+// Validates a file, streaming, so its size doesn't matter.
+fun saftXsdValidateFile(schema: XsdSchema, file: Path, maxErrors: int = 100): XsdValidation =
+    xsdValidateSource(schema, xmlFileSource(file), saftXsdOptions(maxErrors))
+
+// Validates a file held in memory.
+fun saftXsdValidate(schema: XsdSchema, document: string, maxErrors: int = 100): XsdValidation =
+    xsdValidate(schema, document, saftXsdOptions(maxErrors))

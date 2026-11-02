@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
-"""Validates a directory made by tools/make-files.ab: every file in valid/ must pass the
-official XSD (through xmlschema, an XSD 1.1 processor) and xmllint (on the XSD 1.0 copy),
-with control totals recomputed here independently; every file in invalid/ must fail
-the official XSD. Usage: check-files.py official.xsd derived.xsd dir [--at-demo file]"""
+"""Recomputes, independently, the control totals of every file in valid/ of a directory made by
+tools/make-files.ab. Whether they pass the official XSD, and the files in invalid/ fail it, is
+build/saft-xsd's, in tools/check-all.sh. Usage: check-files.py dir"""
 import glob
 import os
-import subprocess
 import sys
 from decimal import Decimal, ROUND_HALF_UP
 import xml.etree.ElementTree as ET
 
-import xmlschema
-
-official, derived, folder = sys.argv[1:4]
-schema = xmlschema.XMLSchema11(official)
+folder = sys.argv[1]
 N = "{urn:OECD:StandardAuditFile-Tax:PT_1.04_01}"
 failures = 0
 
@@ -96,16 +91,6 @@ invalid = sorted(glob.glob(os.path.join(folder, "invalid", "*.xml")))
 if not valid or not invalid:
     raise SystemExit("nothing to check")
 for path in valid:
-    errors = list(schema.iter_errors(path))
-    if errors:
-        fail(f"{path}: official XSD: {errors[0].reason} at {errors[0].path}")
     check_totals(path)
-done = subprocess.run(["xmllint", "--noout", "--nonet", "--schema", derived, *valid], capture_output=True, text=True)
-if done.returncode != 0:
-    fail("xmllint: " + done.stderr[:2000])
-for path in invalid:
-    if schema.is_valid(path):
-        fail(f"{path}: the official XSD accepted a file meant to be invalid")
-print(f"{len(valid)} valid files through xmlschema {xmlschema.__version__} on the official XSD and xmllint on the XSD 1.0 copy; "
-      f"{len(invalid)} invalid files rejected by the official XSD; {failures} failures")
+print(f"control totals of {len(valid)} valid files recomputed; {failures} failures")
 sys.exit(1 if failures else 0)
