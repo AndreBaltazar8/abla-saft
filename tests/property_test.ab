@@ -3,6 +3,7 @@
 import "../src/saft.ab"
 import "support/samples.ab"
 import "abla/test"
+import "abla/text"
 
 fun sumLines(lines: array<SaftLine>): SaftDecimal {
     var sum = saftDecimalZero()
