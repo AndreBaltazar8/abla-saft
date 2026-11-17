@@ -7,7 +7,7 @@ import "abla/process"
 
 // The official XSD, through abla-xml's validator, on a corpus of files with one change each
 // (tests/xsd/mutations.txt): its verdicts and the place of each first error must be those
-// another XSD 1.1 validator gave (tests/xsd/expected.txt, from tools/xsd-expected.py). Needs
+// another XSD 1.1 validator gave (tests/xsd/expected.txt, recorded once from xmlschema, see its header). Needs
 // `make sources`. XSD_SHOW=1 prints every verdict.
 
 class Expected(val verdict: string, val path: string, val line: string)

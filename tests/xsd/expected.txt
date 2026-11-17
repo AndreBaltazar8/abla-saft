@@ -1,4 +1,11 @@
 # xmlschema 4.1.0 on .sources/saftpt1.04_01.xsd: name, verdict, path, line, reason
+# Frozen data. Recorded once by tools/xsd-expected.py (Python with xmlschema 4.1.0 and lxml), which
+# was removed from the repository because Abla repositories carry no Python. It is not regenerated:
+# the script is `git show 34e855c:tools/xsd-expected.py`, run as `python3 -I tools/xsd-expected.py
+# .sources/saftpt1.04_01.xsd > tests/xsd/expected.txt` from the repository, with the official XSD
+# (SOURCES.md). A line is changed by hand only when a line of mutations.txt is added or changed,
+# from what an independent XSD 1.1 validator says of it, and the reason goes in the commit message.
+# tests/xsd_test.ab fails when any verdict, path or line below is changed.
 same-ft	valid	-	-	-
 same-ledger	valid	-	-	-
 same-demo	valid	-	-	-

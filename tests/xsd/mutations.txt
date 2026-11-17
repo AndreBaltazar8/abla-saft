@@ -1,7 +1,7 @@
 # One change each to a valid file, for tests/xsd_test.ab: name, file, which occurrence of the text
 # (from 1), the text, and what replaces it. Tab-separated; \n is a line feed. The schema's verdict
 # on each, and where its first error is, are in expected.txt, recorded from another validator
-# (tools/xsd-expected.py). Files under .sources/ come from `make sources`.
+# (xmlschema 4.1.0; see the header of expected.txt). Files under .sources/ come from `make sources`.
 same-ft	tests/golden/invoice-FT.xml	1	<HashControl>1</HashControl>	<HashControl>1</HashControl>
 same-ledger	tests/xsd/ledger.xml	1	<Period>3</Period>	<Period>3</Period>
 same-demo	.sources/saft_idemo599999999.xml	1	<TaxonomyReference>S</TaxonomyReference>	<TaxonomyReference>S</TaxonomyReference>
