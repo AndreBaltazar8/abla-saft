@@ -8,6 +8,7 @@ import "abla/array"
 import "abla/fs"
 import "abla/io"
 import "abla/process"
+import "abla/text"
 
 private var failures = 0
 

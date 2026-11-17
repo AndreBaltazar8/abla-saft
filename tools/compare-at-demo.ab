@@ -8,6 +8,7 @@ import github("AndreBaltazar8/abla-xml")
 import "abla/fs"
 import "abla/io"
 import "abla/process"
+import "abla/text"
 
 private var differences: array<string> = []
 

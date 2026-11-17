@@ -10,6 +10,7 @@ import github("AndreBaltazar8/abla-xml")
 import "abla/fs"
 import "abla/io"
 import "abla/process"
+import "abla/text"
 
 fun count(text: string): int {
     var value = 0
