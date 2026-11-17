@@ -223,15 +223,15 @@ totals or signatures: those are `saftCheck` and `saftVerifyChains`.
 | 130 files with one change each (`tests/xsd_test.ab`): wrong types, missing, extra and misordered elements, broken patterns, enumerations, bounds, assertions and keys, against the verdicts of [xmlschema](https://github.com/sissaschool/xmlschema) 4.1.0, an independent XSD 1.1 processor | the same verdict for all 130 (103 invalid), and xmlschema's first error at the same element and line for all the invalid ones but one: `xsi:type`, which this validator refuses as unsupported |
 | The 279 golden, generated, invalid and AT demonstration files through both validators side by side (2026-11-02) | the same verdict and first error for every one |
 | 26 deliberately invalid files through the official XSD, and `saftCheck` | all rejected by both (by xmlschema too) |
-| Control totals of those files, recomputed in Python | 0 differences |
-| 22 signatures with a throwaway key: messages rebuilt from the XML in Python, `openssl dgst -sha1 -verify` | all verified, byte-identical to openssl's own, all rejected once tampered with |
+| Control totals of those files, recomputed in Abla (`build/check-files`, with its own fixed-point arithmetic, not `src/decimal.ab`) | 0 differences |
+| 22 signatures with a throwaway key: messages rebuilt from the XML by `build/signed-messages`, `openssl dgst -sha1 -verify` | all verified, byte-identical to openssl's own, all rejected once tampered with |
 | Chain breaks (changed amount, replaced Hash, removed document, wrong series, restarts) | caught, by unit tests with an openssl-made key |
 | AT's 7 specification examples, message by message | identical, with the QR version of each figure |
 | QR PNG through this repository's sibling reader and [zbar](https://github.com/mchehab/zbar) | read exactly |
-| 119,991 decimal operations against Python's `decimal` | 0 differences |
+| 119,991 decimal operations against GNU `bc` (`tools/check-decimals.sh`; against Python's `decimal` until it was replaced) | 0 differences |
 | AT's own demonstration file through the official XSD, reader, check and writer | 0 XSD errors, 0 check errors, control totals agree, 3,726 elements rewritten with 0 differences; the streams give the same bytes and verdict |
 | A file of 3,317,751,574 bytes (3.09 GiB, 540,000 documents), `make big`, local only and not in CI | written with a peak of 186 MB in 89 s; read with every check at 288 MB in 292 s; read and written again at 268 MB in 345 s, byte-identical.At 127 MB the same programs peak at 185 MB and 268 MB |
-| That file's validity (2026-10-31) | `xmllint --stream` on a copy of the XSD reduced to 1.0: valid, the whole file. Control totals recomputed in Python over the whole file: 0 differences. The official XSD through xmlschema: 0 errors, on a 1% sample. `make big` now validates the whole file against the official XSD with `build/saft-xsd` instead; not run at 3 GiB since |
+| That file's validity (2026-10-31) | `xmllint --stream` on a copy of the XSD reduced to 1.0: valid, the whole file. Control totals recomputed over the whole file (then in Python, now `build/check-big`): 0 differences. The official XSD through xmlschema: 0 errors, on a 1% sample. `make big` now validates the whole file against the official XSD with `build/saft-xsd` instead; not run at 3 GiB since |
 | The official XSD 1.1 on a whole 1,107,940,980-byte file (180,000 documents) with `build/saft-xsd` (2026-11-02) | valid, in 75 s with a peak of 174 MiB |
 | The same run with one wrong control total | refused at the end of its section |
 
@@ -291,10 +291,10 @@ Each of these was decided here for lack of a text that says so, and could be wro
 
 `make test` is the unit, golden and property tests, and the schema corpus: it needs `make sources`
 first, since the XSD isn't in this repository. The corpus (`tests/xsd/mutations.txt`) is one change
-each to a valid file; `tests/xsd/expected.txt` is what xmlschema says of each, recorded by
-`make xsd-expected` (Python with xmlschema and lxml, from Nix) and compared with on every run. `make big`
+each to a valid file; `tests/xsd/expected.txt` is what xmlschema says of each, frozen data (xmlschema 4.1.0), recorded once
+by a Python script that is no longer here (its provenance is in the file's header), and compared with on every run. `make big`
 is local only. `make files`, `make signatures` and
-`make at-demo` run the external checks above, taking their tools from Nix. A signing test
+`make at-demo` run the external checks above, taking their tools (openssl, zbar, bc) from Nix; `make check-codes` regenerates `src/codes.ab` from the XSD and compares it byte for byte. A signing test
 makes its key with openssl when it runs and removes it: no private key is in this repository,
 and the golden files' Hash values come from a fake signer that no RSA key could verify.
 
