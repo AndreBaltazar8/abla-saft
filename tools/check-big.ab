@@ -1,0 +1,168 @@
+// check-big <file>: a SAF-T file too big to load, read once with abla-xml's chunked reader,
+// keeping nothing: recomputes every control total (entries, debit, credit, movement lines
+// and quantity of each section) independently of the library, with tools/fixed.ab's own
+// arithmetic, and compares them with what the file says. Exits 1 on any difference.
+import "fixed.ab"
+import github("AndreBaltazar8/abla-xml")
+import "abla/array"
+import "abla/fs"
+import "abla/io"
+import "abla/process"
+
+private var failures = 0
+
+fun fail(message: string): void {
+    failures = failures + 1
+    println("FAIL $message")
+    return
+}
+
+// What a section's documents are called, and which status leaves them out of the totals.
+class Kind(val section: string, val doc: string, val status: string, val excluded: array<string>)
+
+val kinds = [
+    Kind("SalesInvoices", "Invoice", "InvoiceStatus", ["A", "F"]),
+    Kind("WorkingDocuments", "WorkDocument", "WorkStatus", ["A"]),
+    Kind("Payments", "Payment", "PaymentStatus", ["A"]),
+    Kind("MovementOfGoods", "StockMovement", "MovementStatus", ["A"])
+]
+
+fun kindOf(section: string): Kind? {
+    for (k in kinds) if (k.section == section) return k
+    null
+}
+
+fun inList(value: string, list: array<string>): bool {
+    for (e in list) if (e == value) return true
+    false
+}
+
+fun count(name: string, text: string): int {
+    if (text.size == 0) fail("$name is missing")
+    var n = 0
+    for (c in text) {
+        if (c < 48 || c > 57) {
+            fail("$name is not a count: '$text'")
+            return -1
+        }
+        n = n * 10 + (c - 48)
+    }
+    n
+}
+
+fun amount(name: string, text: string): Amount {
+    val a = amountParse(text)
+    if (!a.valid) fail("$name is not an amount: '$text'")
+    a
+}
+
+fun main: int {
+    if (processArgumentCount() != 1) {
+        eprintln("usage: check-big <file>")
+        return 2
+    }
+    val r = xmlChunkedReader(xmlFileSource(path(processArgument(0))),
+        XmlOptions(maxBytes = 1099511627776, maxNodes = 1099511627776))
+    val names: array<string> = []
+    var text = ""
+    var documents = 0
+    // The section being read, and what it has added up.
+    var kind: Kind? = null
+    var entries = 0
+    var lines = 0
+    var debit = zeroAmount
+    var credit = zeroAmount
+    var quantity = zeroAmount
+    // The document being read.
+    var docDebit = zeroAmount
+    var docCredit = zeroAmount
+    var docQuantity = zeroAmount
+    var docLines = 0
+    var docStatus = ""
+    // What the section says of itself.
+    var saidEntries = ""
+    var saidDebit = ""
+    var saidCredit = ""
+    var saidLines = ""
+    var saidQuantity = ""
+    while (true) {
+        val event = r.next()
+        if (event.kind == xmlEventError) {
+            val problem = r.error
+            fail("not well-formed: ${if (problem == null) "" else problem.message}")
+            break
+        }
+        if (event.kind == xmlEventEndOfDocument) break
+        if (event.kind == xmlEventStart) {
+            names.append(event.localName)
+            text = ""
+            val depth = names.size
+            if (depth == 3) {
+                kind = if (names[1] == "SourceDocuments") kindOf(event.localName) else null
+                entries = 0
+                lines = 0
+                debit = zeroAmount
+                credit = zeroAmount
+                quantity = zeroAmount
+                saidEntries = ""
+                saidDebit = ""
+                saidCredit = ""
+                saidLines = ""
+                saidQuantity = ""
+            } else if (depth == 4 && kind != null) {
+                docDebit = zeroAmount
+                docCredit = zeroAmount
+                docQuantity = zeroAmount
+                docLines = 0
+                docStatus = ""
+            }
+        } else if (event.kind == xmlEventText || event.kind == xmlEventCdata) {
+            text = text + event.value
+        } else if (event.kind == xmlEventEnd) {
+            val depth = names.size
+            val name = names[depth - 1]
+            val k = kind
+            if (k != null) {
+                if (depth == 6 && names[4] == "Line") {
+                    if (name == "DebitAmount") docDebit = docDebit.plus(amount("$name", text.trim()))
+                    if (name == "CreditAmount") docCredit = docCredit.plus(amount("$name", text.trim()))
+                    if (name == "Quantity") docQuantity = docQuantity.plus(amount("$name", text.trim()))
+                } else if (depth == 6 && names[4] == "DocumentStatus" && name == k.status) {
+                    docStatus = text.trim()
+                } else if (depth == 5 && name == "Line") {
+                    docLines = docLines + 1
+                } else if (depth == 4 && name == k.doc) {
+                    documents = documents + 1
+                    entries = entries + 1
+                    lines = lines + docLines
+                    if (!inList(docStatus, k.excluded)) {
+                        debit = debit.plus(docDebit)
+                        credit = credit.plus(docCredit)
+                        quantity = quantity.plus(docQuantity)
+                    }
+                } else if (depth == 4) {
+                    if (name == "NumberOfEntries") saidEntries = text.trim()
+                    if (name == "TotalDebit") saidDebit = text.trim()
+                    if (name == "TotalCredit") saidCredit = text.trim()
+                    if (name == "NumberOfMovementLines") saidLines = text.trim()
+                    if (name == "TotalQuantityIssued") saidQuantity = text.trim()
+                } else if (depth == 3) {
+                    if (k.section == "MovementOfGoods") {
+                        if (count("$name NumberOfMovementLines", saidLines) != lines) fail("$name lines $saidLines != $lines")
+                        if (!amount("$name TotalQuantityIssued", saidQuantity).sameAs(quantity)) fail("$name quantity $saidQuantity != ${quantity.text()}")
+                    } else {
+                        if (count("$name NumberOfEntries", saidEntries) != entries) fail("$name entries $saidEntries != $entries")
+                        if (!amount("$name TotalDebit", saidDebit).sameAs(debit)) fail("$name debit $saidDebit != ${debit.text()}")
+                        if (!amount("$name TotalCredit", saidCredit).sameAs(credit)) fail("$name credit $saidCredit != ${credit.text()}")
+                    }
+                    println("$name: $entries documents, $lines lines, totals recomputed")
+                    kind = null
+                }
+            }
+            names.removeLast()
+            text = ""
+        }
+    }
+    println("$documents documents, $failures failures")
+    if (failures > 0) 1 else 0
+}

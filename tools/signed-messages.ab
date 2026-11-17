@@ -1,0 +1,77 @@
+// signed-messages <signed.xml>: for every document with a Hash, one line on the standard
+// output, "number TAB message TAB hash", where the message is rebuilt from the XML in this
+// program's own code (InvoiceDate;SystemEntryDate;number;GrossTotal;previous hash of the
+// same type and series), not by src/sign.ab. tools/verify-signatures.sh has openssl verify
+// each. Looks too at the hash itself: 172 characters on one line, and HashControl 1. A
+// document that fails those is reported on the standard error and makes the exit code 1.
+import github("AndreBaltazar8/abla-xml")
+import "abla/fs"
+import "abla/io"
+import "abla/process"
+import "abla/text"
+
+class Table(val section: string, val doc: string, val number: string, val date: string, val kind: string)
+
+val tables = [
+    Table("SalesInvoices", "Invoice", "InvoiceNo", "InvoiceDate", "InvoiceType"),
+    Table("MovementOfGoods", "StockMovement", "DocumentNumber", "MovementDate", "MovementType"),
+    Table("WorkingDocuments", "WorkDocument", "DocumentNumber", "WorkDate", "WorkType")
+]
+
+fun main: int {
+    if (processArgumentCount() != 1) {
+        eprintln("usage: signed-messages <signed.xml>")
+        return 2
+    }
+    val parsed = xmlParse(path(processArgument(0)).readText())
+    val document = parsed.document
+    if (document == null) {
+        eprintln("not well-formed")
+        return 2
+    }
+    val sources = document.root.child("SourceDocuments")
+    if (sources == null) {
+        eprintln("no SourceDocuments")
+        return 2
+    }
+    var failures = 0
+    var rows = 0
+    for (t in tables) {
+        val section = sources.child(t.section)
+        if (section == null) continue
+        // The last hash of each type and series, as "TYPE series" then the hash.
+        val keys: array<string> = []
+        val hashes: array<string> = []
+        for (d in section.elements(t.doc)) {
+            val number = d.childText(t.number)
+            val key = d.childText(t.kind) + " " + number.split("/")[0]
+            var previous = ""
+            var at = -1
+            for (i in 0 until keys.size) if (keys[i] == key) at = i
+            if (at >= 0) previous = hashes[at]
+            val totals = d.child("DocumentTotals")
+            val gross = if (totals == null) "" else totals.childText("GrossTotal")
+            val message = d.childText(t.date) + ";" + d.childText("SystemEntryDate") + ";" + number + ";" + gross + ";" + previous
+            val hash = d.childText("Hash")
+            if (hash.size != 172 || hash.contains("\n")) {
+                failures = failures + 1
+                eprintln("FAIL: not 172 characters on one line: $number")
+            }
+            if (d.childText("HashControl") != "1") {
+                failures = failures + 1
+                eprintln("FAIL: HashControl $number")
+            }
+            println(number + "\t" + message + "\t" + hash)
+            rows = rows + 1
+            if (at >= 0) hashes[at] = hash else {
+                keys.append(key)
+                hashes.append(hash)
+            }
+        }
+    }
+    if (rows == 0) {
+        eprintln("FAIL: no signed document")
+        return 1
+    }
+    if (failures > 0) 1 else 0
+}

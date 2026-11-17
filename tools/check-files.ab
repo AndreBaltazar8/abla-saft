@@ -1,0 +1,141 @@
+// Recomputes, independently of the library, the control totals of generated SAF-T files:
+// check-files <file.xml>... (those of valid/ in a directory made by tools/make-files.ab).
+// Whether they pass the official XSD, and the files in invalid/ fail it, is build/saft-xsd's,
+// in tools/check-all.sh. Reads each with abla-xml and adds with tools/fixed.ab's own
+// arithmetic, not src/decimal.ab. Exits 1 on any difference.
+import "fixed.ab"
+import github("AndreBaltazar8/abla-xml")
+import "abla/fs"
+import "abla/io"
+import "abla/process"
+
+private var failures = 0
+
+fun fail(message: string): void {
+    failures = failures + 1
+    println("FAIL $message")
+    return
+}
+
+// A child element's text as an amount, failing the file when it isn't one.
+fun amountOf(file: string, parent: XmlElement, name: string): Amount {
+    val a = amountParse(parent.childText(name))
+    if (!a.valid) fail("$file: ${parent.name}/$name is not an amount: '${parent.childText(name)}'")
+    a
+}
+
+fun countOf(file: string, parent: XmlElement, name: string): int {
+    val text = parent.childText(name)
+    var n = 0
+    if (text.size == 0) fail("$file: ${parent.name}/$name is empty")
+    for (c in text) {
+        if (c < 48 || c > 57) {
+            fail("$file: ${parent.name}/$name is not a count: '$text'")
+            return -1
+        }
+        n = n * 10 + (c - 48)
+    }
+    n
+}
+
+fun statusOf(d: XmlElement, name: string): string {
+    val status = d.child("DocumentStatus")
+    if (status == null) "" else status.childText(name)
+}
+
+fun inList(value: string, excluded: array<string>): bool {
+    for (e in excluded) if (e == value) return true
+    false
+}
+
+fun checkSection(file: string, sources: XmlElement, name: string, doc: string, status: string, excluded: array<string>): void {
+    val section = sources.child(name)
+    if (section == null) return
+    var debit = zeroAmount
+    var credit = zeroAmount
+    val documents = section.elements(doc)
+    for (d in documents) {
+        if (inList(statusOf(d, status), excluded)) continue
+        for (line in d.elements("Line")) {
+            if (line.child("DebitAmount") != null) debit = debit.plus(amountOf(file, line, "DebitAmount"))
+            if (line.child("CreditAmount") != null) credit = credit.plus(amountOf(file, line, "CreditAmount"))
+        }
+    }
+    if (countOf(file, section, "NumberOfEntries") != documents.size) fail("$file: $name NumberOfEntries")
+    val totalDebit = amountOf(file, section, "TotalDebit")
+    if (!totalDebit.sameAs(debit)) fail("$file: $name TotalDebit ${section.childText("TotalDebit")} != ${debit.text()}")
+    val totalCredit = amountOf(file, section, "TotalCredit")
+    if (!totalCredit.sameAs(credit)) fail("$file: $name TotalCredit ${section.childText("TotalCredit")} != ${credit.text()}")
+    return
+}
+
+fun checkGoods(file: string, sources: XmlElement): void {
+    val goods = sources.child("MovementOfGoods")
+    if (goods == null) return
+    var lines = 0
+    var quantity = zeroAmount
+    for (d in goods.elements("StockMovement")) {
+        for (line in d.elements("Line")) {
+            lines = lines + 1
+            if (statusOf(d, "MovementStatus") != "A") quantity = quantity.plus(amountOf(file, line, "Quantity"))
+        }
+    }
+    if (countOf(file, goods, "NumberOfMovementLines") != lines) fail("$file: NumberOfMovementLines")
+    if (!amountOf(file, goods, "TotalQuantityIssued").sameAs(quantity)) fail("$file: TotalQuantityIssued")
+    return
+}
+
+// GrossTotal = NetTotal + TaxPayable, and NetTotal = |credits - debits| at 2 places, half up.
+fun checkDocumentTotals(file: string, sources: XmlElement, sectionName: string, doc: string): void {
+    val section = sources.child(sectionName)
+    if (section == null) return
+    for (d in section.elements(doc)) {
+        val number = d.elements()[0].text()
+        val totals = d.child("DocumentTotals")
+        if (totals == null) {
+            fail("$file: $number has no DocumentTotals")
+            continue
+        }
+        val net = amountOf(file, totals, "NetTotal")
+        val tax = amountOf(file, totals, "TaxPayable")
+        val gross = amountOf(file, totals, "GrossTotal")
+        if (!net.plus(tax).sameAs(gross)) fail("$file: $number gross")
+        var base = zeroAmount
+        for (line in d.elements("Line")) {
+            if (line.child("CreditAmount") != null) base = base.plus(amountOf(file, line, "CreditAmount"))
+            else base = base.minus(amountOf(file, line, "DebitAmount"))
+        }
+        if (!base.cents().sameAs(net)) fail("$file: $number net ${net.text()} != ${base.text()}")
+    }
+    return
+}
+
+fun checkFile(file: string): void {
+    val parsed = xmlParse(path(file).readText())
+    val document = parsed.document
+    if (document == null) {
+        fail("$file: not well-formed")
+        return
+    }
+    val sources = document.root.child("SourceDocuments")
+    if (sources == null) return
+    checkSection(file, sources, "SalesInvoices", "Invoice", "InvoiceStatus", ["A", "F"])
+    checkSection(file, sources, "WorkingDocuments", "WorkDocument", "WorkStatus", ["A"])
+    checkSection(file, sources, "Payments", "Payment", "PaymentStatus", ["A"])
+    checkGoods(file, sources)
+    checkDocumentTotals(file, sources, "SalesInvoices", "Invoice")
+    checkDocumentTotals(file, sources, "WorkingDocuments", "WorkDocument")
+    checkDocumentTotals(file, sources, "MovementOfGoods", "StockMovement")
+    return
+}
+
+fun main: int {
+    val count = processArgumentCount()
+    if (count == 0) {
+        eprintln("usage: check-files <file.xml>...")
+        return 2
+    }
+    for (i in 0 until count) checkFile(processArgument(i))
+    println("control totals of $count valid files recomputed; $failures failures")
+    if (failures > 0) 1 else 0
+}

@@ -1,0 +1,122 @@
+// Amounts for the checks in tools/, with their own few lines of arithmetic: nothing here
+// uses src/decimal.ab, so a mistake in the library under test can't also be in its checker.
+// An amount is whole + frac / 10^10, with 0 <= frac < 10^10 and a whole that may be negative
+// (-12.5 is -13 and 0.5): each part is an int, so sums have 18 digits of room before the
+// point. Text with more than 10 places, with a digit that isn't 0 after the tenth, or more
+// than 15 digits before the point, is not an amount. decimalCanonical needs no such limits.
+import "abla/text"
+
+val fixedPlaces = 10
+val fixedScale = 10000000000
+
+class Amount(val valid: bool, val whole: int, val frac: int) {
+    fun plus(other: Amount): Amount {
+        val f = frac + other.frac
+        if (f >= fixedScale) return Amount(valid && other.valid, whole + other.whole + 1, f - fixedScale)
+        Amount(valid && other.valid, whole + other.whole, f)
+    }
+
+    fun negated(): Amount {
+        if (frac == 0) return Amount(valid, -whole, 0)
+        Amount(valid, -whole - 1, fixedScale - frac)
+    }
+
+    fun minus(other: Amount): Amount = plus(other.negated())
+
+    fun isNegative(): bool = whole < 0
+
+    fun sameAs(other: Amount): bool = whole == other.whole && frac == other.frac
+
+    // |this| rounded half up to 2 places: a tie goes away from zero.
+    fun cents(): Amount {
+        val m = if (isNegative()) negated() else this
+        val step = fixedScale / 100
+        var c = m.whole * 100 + m.frac / step
+        if (m.frac % step >= step / 2) c = c + 1
+        Amount(valid, c / 100, c % 100 * step)
+    }
+
+    fun text(): string {
+        val m = if (isNegative()) negated() else this
+        var fraction = "${m.frac}"
+        while (fraction.size < fixedPlaces) fraction = "0" + fraction
+        (if (isNegative()) "-" else "") + "${m.whole}." + fraction
+    }
+}
+
+val notAmount = Amount(false, 0, 0)
+val zeroAmount = Amount(true, 0, 0)
+
+// "-12.50", "7", "0.000001": an optional minus, digits, and optionally a point and digits.
+fun amountParse(text: string): Amount {
+    var i = 0
+    var negative = false
+    if (text.size > 0 && text[0] == 45) {
+        negative = true
+        i = 1
+    }
+    var whole = 0
+    var digits = 0
+    while (i < text.size && text[i] >= 48 && text[i] <= 57) {
+        whole = whole * 10 + (text[i] - 48)
+        digits = digits + 1
+        i = i + 1
+        if (digits > 15) return notAmount
+    }
+    if (digits == 0) return notAmount
+    var fraction = 0
+    var places = 0
+    if (i < text.size && text[i] == 46) {
+        i = i + 1
+        var seen = 0
+        while (i < text.size && text[i] >= 48 && text[i] <= 57) {
+            seen = seen + 1
+            if (places < fixedPlaces) {
+                fraction = fraction * 10 + (text[i] - 48)
+                places = places + 1
+            } else if (text[i] != 48) {
+                return notAmount
+            }
+            i = i + 1
+        }
+        if (seen == 0) return notAmount
+    }
+    if (i != text.size) return notAmount
+    while (places < fixedPlaces) {
+        fraction = fraction * 10
+        places = places + 1
+    }
+    val magnitude = Amount(true, whole, fraction)
+    if (negative) magnitude.negated() else magnitude
+}
+
+// The value of a decimal written out, as text that is the same for the same value: the
+// sign, the integer digits without leading zeros, and the fraction without trailing zeros.
+// Any number of digits. Null when the text isn't a decimal.
+fun decimalCanonical(text: string): string? {
+    var i = 0
+    var negative = false
+    if (text.size > 0 && (text[0] == 45 || text[0] == 43)) {
+        negative = text[0] == 45
+        i = 1
+    }
+    val begin = i
+    while (i < text.size && text[i] >= 48 && text[i] <= 57) i = i + 1
+    val whole = text.slice(begin, i)
+    var fraction = ""
+    if (i < text.size && text[i] == 46) {
+        val at = i + 1
+        i = at
+        while (i < text.size && text[i] >= 48 && text[i] <= 57) i = i + 1
+        fraction = text.slice(at, i)
+    }
+    if (i != text.size || whole.size + fraction.size == 0) return null
+    var from = 0
+    while (from < whole.size && whole[from] == 48) from = from + 1
+    var to = fraction.size
+    while (to > 0 && fraction[to - 1] == 48) to = to - 1
+    val integer = if (from == whole.size) "0" else whole.slice(from, whole.size)
+    val trimmed = fraction.slice(0, to)
+    if (integer == "0" && trimmed.size == 0) return "0"
+    (if (negative) "-" else "") + integer + (if (trimmed.size > 0) "." + trimmed else "")
+}

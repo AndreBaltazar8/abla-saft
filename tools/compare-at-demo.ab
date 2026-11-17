@@ -1,0 +1,97 @@
+// compare-at-demo original.xml rewritten.xml: the same content, element by element, with
+// decimals compared by value (1.50 is 1.5). The Header, MasterFiles (without its
+// GeneralLedgerAccounts, which the library doesn't keep) and SourceDocuments. Both files pass
+// the official XSD first, through build/saft-xsd (tools/check-at-demo.sh). The decimal
+// comparison is tools/fixed.ab's, not src/decimal.ab. Exits 1 on any difference.
+import "fixed.ab"
+import github("AndreBaltazar8/abla-xml")
+import "abla/fs"
+import "abla/io"
+import "abla/process"
+
+private var differences: array<string> = []
+
+fun note(message: string): void {
+    differences.append(message)
+    return
+}
+
+fun kept(e: XmlElement, skip: string): array<XmlElement> {
+    val found: array<XmlElement> = []
+    for (c in e.elements()) if (c.localName != skip) found.append(c)
+    found
+}
+
+fun sameValue(a: string, b: string): bool {
+    if (a == b) return true
+    val x = decimalCanonical(a)
+    val y = decimalCanonical(b)
+    x != null && y != null && x == y
+}
+
+// The text of an element with no child elements, without the white space around it.
+fun leafText(e: XmlElement): string = if (e.elements().size == 0) e.text().trim() else ""
+
+fun compare(a: XmlElement, b: XmlElement, parent: string, skip: string): void {
+    if (a.localName != b.localName) {
+        note("$parent: ${a.localName} != ${b.localName}")
+        return
+    }
+    val here = parent + "/" + a.localName
+    val ta = leafText(a)
+    val tb = leafText(b)
+    if (!sameValue(ta, tb)) note("$here: '$ta' != '$tb'")
+    val ca = kept(a, skip)
+    val cb = kept(b, "")
+    // The skipped table is skipped on both sides, at this level only.
+    val cb2 = if (skip == "") cb else kept(b, skip)
+    if (ca.size != cb2.size) note("$here: ${ca.size} children != ${cb2.size}")
+    val n = if (ca.size < cb2.size) ca.size else cb2.size
+    for (i in 0 until n) compare(ca[i], cb2[i], here, "")
+    return
+}
+
+fun countElements(e: XmlElement): int {
+    var n = 1
+    for (c in e.elements()) n = n + countElements(c)
+    n
+}
+
+fun load(file: string): XmlElement? {
+    val parsed = xmlParse(path(file).readText())
+    val document = parsed.document
+    if (document == null) {
+        eprintln("$file: not well-formed")
+        return null
+    }
+    document.root
+}
+
+fun main: int {
+    if (processArgumentCount() != 2) {
+        eprintln("usage: compare-at-demo original.xml rewritten.xml")
+        return 2
+    }
+    val left = load(processArgument(0))
+    val right = load(processArgument(1))
+    if (left == null || right == null) return 2
+    var elements = 0
+    for (name in ["Header", "MasterFiles", "SourceDocuments"]) {
+        val a = left.child(name)
+        val b = right.child(name)
+        if (a == null || b == null) {
+            note("$name is missing from one of the files")
+            continue
+        }
+        compare(a, b, "", if (name == "MasterFiles") "GeneralLedgerAccounts" else "")
+        elements = elements + countElements(a)
+    }
+    println("$elements elements compared; ${differences.size} differences")
+    var shown = 0
+    for (d in differences) {
+        if (shown >= 20) break
+        println("  $d")
+        shown = shown + 1
+    }
+    if (differences.size > 0) 1 else 0
+}

@@ -2,10 +2,10 @@ ABLAC_DIR ?= $(abspath ../ablac)
 COMPILER ?= $(ABLAC_DIR)/build/ablac
 TESTS := tests/decimal_test.ab tests/writer_test.ab tests/reader_test.ab tests/sign_test.ab tests/qr_test.ab tests/property_test.ab tests/stream_test.ab tests/xsd_test.ab
 BUILD := nix-shell $(ABLAC_DIR)/shell.nix --run
-TOOLS := nix-shell -p openssl zbar python3 --run
+TOOLS := nix-shell -p openssl zbar bc --run
 GENERATED ?= 200
 
-.PHONY: big test test-in-shell sources programs programs-in-shell files signatures at-demo codes xsd-expected all clean
+.PHONY: big test test-in-shell sources programs programs-in-shell files signatures at-demo codes check-codes all clean
 
 all: test files signatures at-demo
 
@@ -33,6 +33,11 @@ programs-in-shell:
 	$(COMPILER) build tools/at-demo.ab -o build/at-demo
 	$(COMPILER) build tools/decimal-vectors.ab -o build/decimal-vectors
 	$(COMPILER) build tools/saft-xsd.ab -o build/saft-xsd
+	$(COMPILER) build tools/check-files.ab -o build/check-files
+	$(COMPILER) build tools/check-big.ab -o build/check-big
+	$(COMPILER) build tools/compare-at-demo.ab -o build/compare-at-demo
+	$(COMPILER) build tools/signed-messages.ab -o build/signed-messages
+	$(COMPILER) build tools/gen-codes.ab -o build/gen-codes
 
 # Every document type and generated files, through the official XSD (build/saft-xsd).
 files: sources programs
@@ -46,13 +51,14 @@ signatures: programs
 at-demo: sources programs
 	$(TOOLS) tools/check-at-demo.sh
 
-codes: sources
-	python3 -I tools/gen-codes.py .sources/saftpt1.04_01.xsd > src/codes.ab
+# src/codes.ab, regenerated from the official XSD by tools/gen-codes.ab.
+codes: sources programs
+	build/gen-codes .sources/saftpt1.04_01.xsd > build/codes.ab
+	mv build/codes.ab src/codes.ab
 
-# What xmlschema, an independent XSD 1.1 validator, says of tests/xsd/mutations.txt, which
-# tests/xsd_test.ab compares with. Run after changing the corpus.
-xsd-expected: sources
-	nix-shell -p 'python3.withPackages(p: [p.xmlschema p.lxml])' --run 'python3 -I tools/xsd-expected.py .sources/saftpt1.04_01.xsd' > tests/xsd/expected.txt
+# The committed src/codes.ab must be what the generator makes of the official XSD, byte for byte.
+check-codes: sources programs
+	build/gen-codes .sources/saftpt1.04_01.xsd | cmp - src/codes.ab
 
 # A SAF-T file of at least 3 GiB through files, with peak memory. Local only; needs GNU time.
 BIG_DIR ?= /tmp

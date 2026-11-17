@@ -24,12 +24,14 @@ jobs:
         run: make test-in-shell COMPILER=ablac
       - name: Build tools and the example
         run: make programs-in-shell COMPILER=ablac
-      - name: Generated files through the official XSD, decimals against Python
+      - name: Generated files through the official XSD, control totals, decimals against bc
         run: |
-          nix-shell -p python3 --run 'tools/check-all.sh 200'
+          nix-shell -p bc --run 'tools/check-all.sh 200'
       - name: Signatures against openssl, QR images through zbar
         run: |
-          nix-shell -p openssl zbar python3 --run tools/check-signatures.sh
+          nix-shell -p openssl zbar --run tools/check-signatures.sh
       - name: AT's demonstration file through the XSD, reader and writer
         run: |
-          nix-shell -p python3 --run tools/check-at-demo.sh
+          tools/check-at-demo.sh
+      - name: src/codes.ab is what the generator makes of the official XSD
+        run: build/gen-codes .sources/saftpt1.04_01.xsd | cmp - src/codes.ab

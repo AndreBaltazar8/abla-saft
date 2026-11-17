@@ -1,5 +1,5 @@
-// Prints random decimal operations with this library's results, for tools/check-decimals.py
-// to recompute with Python's decimal, an independent implementation.
+// Prints random decimal operations with this library's results, for tools/check-decimals.sh
+// to recompute with GNU bc, an independent implementation.
 import "../src/decimal.ab"
 import "abla/io"
 import "abla/process"

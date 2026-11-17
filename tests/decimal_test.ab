@@ -1,4 +1,4 @@
-// Python's decimal checks these on many more values: tools/check-decimals.py.
+// Another decimal implementation, GNU bc, checks these on many more values: tools/check-decimals.sh.
 import "../src/decimal.ab"
 import "abla/test"
 

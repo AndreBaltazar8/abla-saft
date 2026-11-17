@@ -1,5 +1,5 @@
 // Random files, with a repeatable generator: what's true of all of them. tools/check-all.sh
-// also puts generated files through the official XSD and recomputes totals in Python.
+// also puts generated files through the official XSD and recomputes totals in Abla (tools/check-files.ab).
 import "../src/saft.ab"
 import "support/samples.ab"
 import "abla/test"
