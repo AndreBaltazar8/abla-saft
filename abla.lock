@@ -1,0 +1,23 @@
+version = 2
+
+[[package]]
+name = "abla-xml"
+provider = "git"
+identity = "github:AndreBaltazar8/abla-xml"
+source = "https://github.com/AndreBaltazar8/abla-xml.git"
+selector-kind = "head"
+selector = "HEAD"
+revision = "9ff920df92286e0787cdef0e83fda620e5da64fa"
+digest = "f74ae03383da3a1439b7a6cec855e992b823fe9f"
+entry = "src/xml.ab"
+
+[[package]]
+name = "abla-qr"
+provider = "git"
+identity = "github:AndreBaltazar8/abla-qr"
+source = "https://github.com/AndreBaltazar8/abla-qr.git"
+selector-kind = "head"
+selector = "HEAD"
+revision = "5423257cb6b608b5a1485626d359ae78fbc9cd73"
+digest = "1e5fa848965cea9f8f14b5c5cc8e68274a162f65"
+entry = "src/qr.ab"

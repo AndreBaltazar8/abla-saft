@@ -5,9 +5,15 @@ BUILD := nix-shell $(ABLAC_DIR)/shell.nix --run
 TOOLS := nix-shell -p openssl zbar bc --run
 GENERATED ?= 200
 
-.PHONY: big test test-in-shell sources programs programs-in-shell files signatures at-demo codes check-codes all clean
+.PHONY: big test test-in-shell sources programs programs-in-shell files signatures at-demo codes check-codes all clean packages-update
 
 all: test files signatures at-demo
+
+# The dependencies are the committed abla.lock's (decision #85): `package vendor` puts each at its locked revision
+# under vendor/ (ignored), never moving it. Moving them is a deliberate change: `make packages-update`, then test and
+# commit the new abla.lock.
+packages-update:
+	$(BUILD) '$(COMPILER) package update --project .'
 
 test: sources
 	$(BUILD) '$(MAKE) test-in-shell'
@@ -15,7 +21,7 @@ test: sources
 # Money never goes through floats: no float type in the library at all. tests/xsd_test.ab needs
 # the official XSD, from `make sources`.
 test-in-shell:
-	$(COMPILER) package update --project . >/dev/null
+	$(COMPILER) package vendor --project . >/dev/null
 	! grep -nE '\b(f32|f64)\b|abla/float' src/*.ab src/xsd/*.ab
 	$(COMPILER) test $(TESTS)
 
@@ -26,7 +32,7 @@ programs:
 	$(BUILD) '$(MAKE) programs-in-shell'
 
 programs-in-shell:
-	$(COMPILER) package update --project . >/dev/null
+	$(COMPILER) package vendor --project . >/dev/null
 	$(COMPILER) build examples/invoice.ab -o build/invoice
 	$(COMPILER) build tools/make-files.ab -o build/make-files
 	$(COMPILER) build tools/sign-series.ab -o build/sign-series
