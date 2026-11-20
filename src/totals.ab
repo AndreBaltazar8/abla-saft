@@ -1,7 +1,6 @@
 // Control totals of Portaria 302/2016, Annex I, tables 4.1 to 4.4, and document totals.
 import "decimal.ab"
 import "model.ab"
-import "abla/text"
 
 // A section's control totals, a document at a time, so a file needn't be in memory to
 // add it up. Which document counts for what is here and nowhere else.

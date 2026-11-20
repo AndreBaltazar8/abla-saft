@@ -3,7 +3,6 @@ import github("AndreBaltazar8/abla-xml")
 import "decimal.ab"
 import "model.ab"
 import "check.ab"
-import "totals.ab"
 import "abla/fs"
 
 // The XSD and AT's demonstration file both declare Windows-1252, and the Portaria

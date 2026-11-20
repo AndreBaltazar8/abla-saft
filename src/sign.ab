@@ -3,7 +3,6 @@
 // line, 172 characters. The certificate and key registration with AT are the program
 // producer's; a key made here signs correctly in form and is known to AT only if
 // declared to it.
-import "abla/bytes"
 import "abla/crypto"
 import "abla/crypto/rsa"
 import "abla/text"
