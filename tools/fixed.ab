@@ -4,7 +4,6 @@
 // (-12.5 is -13 and 0.5): each part is an int, so sums have 18 digits of room before the
 // point. Text with more than 10 places, with a digit that isn't 0 after the tenth, or more
 // than 15 digits before the point, is not an amount. decimalCanonical needs no such limits.
-import "abla/text"
 
 val fixedPlaces = 10
 val fixedScale = 10000000000

@@ -3,7 +3,6 @@
 // other direction, and chain breaks. FakeSigner stands in where no RSA is at stake.
 import "../src/saft.ab"
 import "support/samples.ab"
-import "abla/crypto"
 import "abla/fs"
 import "abla/process"
 import "abla/test"

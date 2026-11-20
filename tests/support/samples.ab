@@ -4,7 +4,6 @@
 import "../../src/saft.ab"
 import "abla/bytes"
 import "abla/crypto"
-import "abla/text"
 
 val sampleCertificate = 0
 
