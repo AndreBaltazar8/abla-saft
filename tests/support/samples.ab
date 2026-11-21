@@ -5,8 +5,6 @@ import "../../src/saft.ab"
 import "abla/bytes"
 import "abla/crypto"
 
-val sampleCertificate = 0
-
 class FakeSigner(val version: int = 1) : SaftSigner {
     fun keyVersion(): int = version
 
