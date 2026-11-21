@@ -6,7 +6,6 @@
 import "../src/saft.ab"
 import "../tests/support/samples.ab"
 import "../tests/support/streaming.ab"
-import github("AndreBaltazar8/abla-xml")
 import "abla/fs"
 import "abla/io"
 import "abla/process"
